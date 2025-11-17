@@ -1,0 +1,239 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Retro Space Theme - Deep Space Background */
+    --background: 240 40% 8%;
+    --foreground: 210 20% 85%;
+
+    /* Cards with slight transparency and neon borders */
+    --card: 240 30% 12%;
+    --card-foreground: 210 20% 85%;
+
+    --popover: 240 30% 10%;
+    --popover-foreground: 210 20% 85%;
+
+    /* Softer Cyan Primary */
+    --primary: 180 60% 55%;
+    --primary-foreground: 240 40% 8%;
+
+    /* Softer Magenta Secondary */
+    --secondary: 300 50% 60%;
+    --secondary-foreground: 240 40% 8%;
+
+    /* Purple Muted */
+    --muted: 270 50% 30%;
+    --muted-foreground: 270 30% 75%;
+
+    /* Softer Purple Accent */
+    --accent: 270 60% 65%;
+    --accent-foreground: 240 40% 8%;
+
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Sharp borders for pixelated feel */
+    --border: 180 40% 45%;
+    --input: 240 30% 15%;
+    --ring: 180 60% 55%;
+
+    /* No border radius for retro pixelated style */
+    --radius: 0rem;
+
+    /* Gradients - softer */
+    --gradient-neon: linear-gradient(135deg, hsl(180 60% 55%), hsl(270 60% 65%));
+    --gradient-space: linear-gradient(180deg, hsl(240 40% 8%), hsl(270 50% 15%));
+    
+    /* Softer Glow effects */
+    --glow-cyan: 0 0 10px hsl(180 60% 55% / 0.3);
+    --glow-magenta: 0 0 10px hsl(300 50% 60% / 0.3);
+    --glow-purple: 0 0 10px hsl(270 60% 65% / 0.3);
+
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Press Start 2P', 'Courier New', monospace;
+  }
+
+  /* Pixel perfect text rendering */
+  h1, h2, h3, h4, h5, h6 {
+    image-rendering: pixelated;
+    -webkit-font-smoothing: none;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  /* Softer neon glow */
+  .neon-text {
+    text-shadow: 
+      0 0 5px hsl(var(--primary) / 0.6),
+      0 0 10px hsl(var(--primary) / 0.4);
+  }
+
+  .neon-border {
+    border: 2px solid hsl(var(--primary));
+    box-shadow: 
+      0 0 8px hsl(var(--primary) / 0.3),
+      inset 0 0 8px hsl(var(--primary) / 0.15);
+  }
+
+  /* Parallax container */
+  .parallax-container {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .parallax-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-attachment: fixed;
+    background-size: cover;
+    will-change: transform;
+  }
+
+  /* Hover lift effect */
+  .hover-lift {
+    transition: var(--transition-smooth);
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-8px);
+    box-shadow: 
+      0 0 20px hsl(var(--primary) / 0.6),
+      0 8px 16px hsl(var(--primary) / 0.3);
+  }
+
+  /* Pixelated borders */
+  .pixel-border {
+    border: 4px solid hsl(var(--border));
+    box-shadow: 
+      4px 4px 0 hsl(var(--primary) / 0.3),
+      8px 8px 0 hsl(var(--secondary) / 0.2);
+  }
+
+  /* Glitch effect */
+  .glitch {
+    position: relative;
+    animation: glitch 3s infinite;
+  }
+
+  /* Scanlines effect */
+  .scanlines::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+      transparent 50%,
+      rgba(0, 0, 0, 0.1) 50%
+    );
+    background-size: 100% 4px;
+    pointer-events: none;
+    z-index: 10;
+  }
+}
+
+@layer utilities {
+  @keyframes neon-pulse {
+    0%, 100% {
+      text-shadow: 
+        0 0 5px hsl(var(--primary) / 0.5),
+        0 0 10px hsl(var(--primary) / 0.3);
+    }
+    50% {
+      text-shadow: 
+        0 0 8px hsl(var(--primary) / 0.6),
+        0 0 15px hsl(var(--primary) / 0.4);
+    }
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-20px);
+    }
+  }
+
+  @keyframes glitch {
+    0%, 90%, 100% {
+      transform: translate(0);
+    }
+    92% {
+      transform: translate(-2px, 2px);
+    }
+    94% {
+      transform: translate(2px, -2px);
+    }
+    96% {
+      transform: translate(-2px, -2px);
+    }
+    98% {
+      transform: translate(2px, 2px);
+    }
+  }
+
+  @keyframes slide-in {
+    from {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% {
+      box-shadow: 0 0 10px hsl(var(--primary) / 0.25);
+    }
+    50% {
+      box-shadow: 0 0 20px hsl(var(--primary) / 0.4);
+    }
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-slide-in {
+    animation: slide-in 0.5s ease-out;
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
