@@ -1,98 +1,191 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Database, Languages, Users, Download } from "lucide-react";
+import { Database, Languages, ShoppingCart, Loader2, Filter } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import spaceBg from "@/assets/space-bg.jpg";
+import { Transaction } from "@mysten/sui/transactions";
+import { toast } from "sonner";
 
-const categories = [
-  { 
-    name: "English", 
-    datasets: 245, 
-    contributors: 1240,
-    description: "Multiple accents and dialects"
-  },
-  { 
-    name: "Spanish", 
-    datasets: 189, 
-    contributors: 890,
-    description: "Latin American and European"
-  },
-  { 
-    name: "Mandarin", 
-    datasets: 167, 
-    contributors: 756,
-    description: "Various regional dialects"
-  },
-  { 
-    name: "French", 
-    datasets: 134, 
-    contributors: 623,
-    description: "Multiple regional accents"
-  },
-  { 
-    name: "Arabic", 
-    datasets: 123, 
-    contributors: 567,
-    description: "Middle Eastern dialects"
-  },
-  { 
-    name: "Hindi", 
-    datasets: 156, 
-    contributors: 712,
-    description: "Standard and regional"
-  },
-  { 
-    name: "Portuguese", 
-    datasets: 98, 
-    contributors: 445,
-    description: "Brazilian and European"
-  },
-  { 
-    name: "Bengali", 
-    datasets: 87, 
-    contributors: 398,
-    description: "Standard and regional"
-  },
-];
+const PACKAGE_ID = "0x0085237749e83235fc57d3bcf85b545eba743a3491b1dc9c3e26b5006edf17f7";
+const SUBSCRIPTION_FEE = 10_000_000; // 0.01 SUI in MIST
 
-const mockDatasets = [
-  {
-    id: 1,
-    title: "American English - Standard",
-    samples: 150,
-    duration: "2.5 hours",
-    quality: "High",
-    price: "0.5 ETH"
-  },
-  {
-    id: 2,
-    title: "American English - Southern Accent",
-    samples: 120,
-    duration: "2 hours",
-    quality: "High",
-    price: "0.45 ETH"
-  },
-  {
-    id: 3,
-    title: "American English - New York Accent",
-    samples: 98,
-    duration: "1.8 hours",
-    quality: "Medium",
-    price: "0.35 ETH"
-  },
-  {
-    id: 4,
-    title: "American English - Midwest Accent",
-    samples: 175,
-    duration: "3 hours",
-    quality: "High",
-    price: "0.6 ETH"
-  },
-];
+interface DatasetData {
+  id: string;
+  creator: string;
+  language: string;
+  dialect: string;
+  duration: string;
+  blobId: string;
+  createdAt: number;
+}
 
 const Marketplace = () => {
-  const [selectedCategory, setSelectedCategory] = useState("");
+  const currentAccount = useCurrentAccount();
+  const suiClient = useSuiClient();
+  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  const [datasets, setDatasets] = useState<DatasetData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [purchasing, setPurchasing] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("");
+  const [myDatasets, setMyDatasets] = useState<Set<string>>(new Set());
+  const [mySubscriptions, setMySubscriptions] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    loadMarketplace();
+    const interval = setInterval(loadMarketplace, 5000);
+    return () => clearInterval(interval);
+  }, [currentAccount?.address]);
+
+  const loadMarketplace = async () => {
+    try {
+      // Get all VoiceDataset objects from events
+      const allObjects = await suiClient.queryEvents({
+        query: {
+          MoveEventType: `${PACKAGE_ID}::voice_marketplace::DatasetCreated`,
+        },
+        limit: 1000,
+      });
+
+      const datasetsData: DatasetData[] = await Promise.all(
+        allObjects.data.map(async (event: any) => {
+          const datasetId = event.parsedJson.dataset_id;
+          
+          try {
+            const dataset = await suiClient.getObject({
+              id: datasetId,
+              options: { showContent: true, showOwner: true },
+            });
+
+            const fields = (dataset.data?.content as any)?.fields;
+            if (!fields) return null;
+
+            return {
+              id: datasetId,
+              creator: fields.creator,
+              language: fields.language,
+              dialect: fields.dialect,
+              duration: fields.duration,
+              blobId: fields.blob_id,
+              createdAt: parseInt(fields.created_at),
+            };
+          } catch (err) {
+            console.error("Error loading dataset:", datasetId, err);
+            return null;
+          }
+        })
+      );
+
+      const validDatasets = datasetsData.filter(Boolean) as DatasetData[];
+      setDatasets(validDatasets);
+
+      // Load user's own datasets and subscriptions
+      if (currentAccount?.address) {
+        const myDatasetIds = new Set(
+          validDatasets
+            .filter(d => d.creator === currentAccount.address)
+            .map(d => d.id)
+        );
+        setMyDatasets(myDatasetIds);
+
+        // Get user's subscriptions
+        const subs = await suiClient.getOwnedObjects({
+          owner: currentAccount.address,
+          options: { showContent: true },
+          filter: {
+            StructType: `${PACKAGE_ID}::voice_marketplace::Subscription`,
+          },
+        });
+
+        const subDatasetIds = new Set(
+          subs.data
+            .map(obj => (obj.data?.content as any)?.fields?.dataset_id)
+            .filter(Boolean)
+        );
+        setMySubscriptions(subDatasetIds);
+      }
+    } catch (error) {
+      console.error("Error loading marketplace:", error);
+      toast.error("Failed to load marketplace");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePurchase = async (dataset: DatasetData) => {
+    if (!currentAccount?.address) {
+      toast.error("Please connect your wallet");
+      return;
+    }
+
+    if (dataset.creator === currentAccount.address) {
+      toast.error("You cannot purchase your own dataset");
+      return;
+    }
+
+    if (mySubscriptions.has(dataset.id)) {
+      toast.info("You already own this dataset");
+      return;
+    }
+
+    setPurchasing(dataset.id);
+
+    try {
+      const tx = new Transaction();
+      tx.setGasBudget(10000000);
+
+      // Split the subscription fee from the gas coin
+      // This is the recommended pattern - gas coin is automatically available as tx.gas
+      const [paymentCoin] = tx.splitCoins(tx.gas, [SUBSCRIPTION_FEE]);
+
+      // Call subscribe_entry with the split coin
+      tx.moveCall({
+        target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
+        arguments: [
+          paymentCoin,             // Payment coin (split from gas)
+          tx.object(dataset.id),   // VoiceDataset object
+          tx.object('0x6'),        // Clock object
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: (result) => {
+            console.log("Purchase successful:", result.digest);
+            toast.success("Purchase successful! Check 'My Subscriptions'");
+            loadMarketplace();
+          },
+          onError: (error) => {
+            console.error("Purchase error:", error);
+            toast.error("Purchase failed: " + (error?.message || 'Unknown error'));
+          },
+        }
+      );
+    } catch (error: any) {
+      console.error("Purchase error:", error);
+      toast.error(`Purchase failed: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setPurchasing(null);
+    }
+  };
+
+  const filteredDatasets = selectedLanguage
+    ? datasets.filter(d => d.language === selectedLanguage)
+    : datasets;
+
+  const languages = Array.from(new Set(datasets.map(d => d.language)));
+
+  const getButtonState = (dataset: DatasetData) => {
+    if (myDatasets.has(dataset.id)) {
+      return { text: "YOUR DATASET", disabled: true, variant: "outline" as const };
+    }
+    if (mySubscriptions.has(dataset.id)) {
+      return { text: "OWNED", disabled: true, variant: "outline" as const };
+    }
+    return { text: "PURCHASE (0.01 SUI)", disabled: false, variant: "default" as const };
+  };
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -116,129 +209,119 @@ const Marketplace = () => {
             VOICE MARKETPLACE
           </h1>
 
-          {/* Category Selection */}
-          {!selectedCategory && (
-            <div className="animate-slide-in">
-              <h2 className="text-2xl font-bold mb-8 text-primary flex items-center justify-center gap-2">
-                <Languages className="w-8 h-8" />
-                SELECT LANGUAGE CATEGORY
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {categories.map((category) => (
-                  <Card
-                    key={category.name}
-                    className="p-6 cursor-pointer neon-border bg-card/50 backdrop-blur hover-lift"
-                    onClick={() => setSelectedCategory(category.name)}
-                  >
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-2xl font-bold text-primary">{category.name}</h3>
-                      <Database className="w-8 h-8 text-secondary animate-pulse" />
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-4">
-                      {category.description}
-                    </p>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex items-center gap-2 text-accent">
-                        <Database className="w-4 h-4" />
-                        <span>{category.datasets} datasets</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-secondary">
-                        <Users className="w-4 h-4" />
-                        <span>{category.contributors} contributors</span>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Dataset Listings */}
-          {selectedCategory && (
-            <div className="animate-slide-in">
+          {/* Language Filter */}
+          <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-8">
+            <div className="flex items-center gap-4 flex-wrap">
+              <Filter className="w-6 h-6 text-primary" />
+              <span className="text-lg font-bold text-primary">Filter by Language:</span>
               <Button
-                variant="ghost"
-                onClick={() => setSelectedCategory("")}
-                className="mb-6 text-secondary hover:text-secondary/80"
+                variant={selectedLanguage === "" ? "default" : "outline"}
+                onClick={() => setSelectedLanguage("")}
+                className="pixel-border"
               >
-                ← BACK TO CATEGORIES
+                All Languages
               </Button>
-
-              <h2 className="text-3xl font-bold mb-8 text-primary">
-                {selectedCategory} DATASETS
-              </h2>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {mockDatasets.map((dataset) => (
-                  <Card
-                    key={dataset.id}
-                    className="p-6 neon-border bg-card/80 backdrop-blur hover-lift"
-                  >
-                    <div className="flex items-start justify-between mb-4">
-                      <div>
-                        <h3 className="text-xl font-bold text-primary mb-2">
-                          {dataset.title}
-                        </h3>
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                          <span>{dataset.samples} samples</span>
-                          <span>•</span>
-                          <span>{dataset.duration}</span>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold text-accent animate-neon-pulse">
-                          {dataset.price}
-                        </div>
-                        <div className={`text-xs ${
-                          dataset.quality === 'High' ? 'text-primary' : 'text-secondary'
-                        }`}>
-                          {dataset.quality} Quality
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3 mb-4">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-foreground/70">Audio Format:</span>
-                        <span className="text-primary font-bold">MP3 320kbps</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-foreground/70">Sample Rate:</span>
-                        <span className="text-primary font-bold">48kHz</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-foreground/70">License:</span>
-                        <span className="text-primary font-bold">Commercial Use</span>
-                      </div>
-                    </div>
-
-                    <Button
-                      className="w-full bg-gradient-to-r from-primary to-secondary text-background font-bold py-3 hover:opacity-90 transition-all pixel-border"
-                    >
-                      <Download className="w-5 h-5 mr-2" />
-                      PURCHASE DATASET
-                    </Button>
-                  </Card>
-                ))}
-              </div>
-
-              {/* Pagination placeholder */}
-              <div className="flex justify-center gap-4 mt-8">
-                {[1, 2, 3, 4].map((page) => (
-                  <Button
-                    key={page}
-                    variant={page === 1 ? "default" : "outline"}
-                    className={`w-12 h-12 ${
-                      page === 1
-                        ? "bg-primary text-background"
-                        : "border-primary text-primary hover:bg-primary/20"
-                    }`}
-                  >
-                    {page}
-                  </Button>
-                ))}
-              </div>
+              {languages.map(lang => (
+                <Button
+                  key={lang}
+                  variant={selectedLanguage === lang ? "default" : "outline"}
+                  onClick={() => setSelectedLanguage(lang)}
+                  className="pixel-border"
+                >
+                  {lang}
+                </Button>
+              ))}
             </div>
+          </Card>
+
+          {loading ? (
+            <div className="flex justify-center items-center py-20">
+              <Loader2 className="w-12 h-12 text-primary animate-spin" />
+            </div>
+          ) : filteredDatasets.length === 0 ? (
+            <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
+              <Database className="w-16 h-16 text-secondary mx-auto mb-4" />
+              <p className="text-xl text-primary mb-2">No Datasets Available</p>
+              <p className="text-muted-foreground">
+                {selectedLanguage 
+                  ? `No datasets found for ${selectedLanguage}`
+                  : "Be the first to record and publish a voice dataset!"}
+              </p>
+            </Card>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredDatasets.map((dataset) => {
+                  const buttonState = getButtonState(dataset);
+                  
+                  return (
+                    <Card
+                      key={dataset.id}
+                      className="p-6 neon-border bg-card/80 backdrop-blur hover-lift"
+                    >
+                      <div className="flex items-start justify-between mb-4">
+                        <div>
+                          <h3 className="text-xl font-bold text-primary mb-2">
+                            {dataset.language} - {dataset.dialect}
+                          </h3>
+                          <div className="space-y-1 text-sm text-muted-foreground">
+                            <p>Duration: {dataset.duration}</p>
+                            <p>Created: {new Date(dataset.createdAt).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <Languages className="w-8 h-8 text-secondary" />
+                      </div>
+
+                      <div className="space-y-3 mb-4 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="text-foreground/70">Format:</span>
+                          <span className="text-primary font-bold">MP3 Encrypted</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-foreground/70">Storage:</span>
+                          <span className="text-primary font-bold">Walrus</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-foreground/70">License:</span>
+                          <span className="text-primary font-bold">AI Training</span>
+                        </div>
+                      </div>
+
+                      <Button
+                        onClick={() => handlePurchase(dataset)}
+                        disabled={buttonState.disabled || purchasing === dataset.id}
+                        variant={buttonState.variant}
+                        className={`w-full font-bold py-3 pixel-border ${
+                          buttonState.disabled 
+                            ? "opacity-50" 
+                            : "bg-gradient-to-r from-primary to-secondary text-background hover:opacity-90"
+                        }`}
+                      >
+                        {purchasing === dataset.id ? (
+                          <>
+                            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                            PROCESSING...
+                          </>
+                        ) : (
+                          <>
+                            <ShoppingCart className="w-5 h-5 mr-2" />
+                            {buttonState.text}
+                          </>
+                        )}
+                      </Button>
+                    </Card>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-center gap-4 mt-8">
+                <div className="text-center text-muted-foreground">
+                  <p className="text-sm">
+                    Showing {filteredDatasets.length} dataset{filteredDatasets.length !== 1 ? 's' : ''}
+                  </p>
+                </div>
+              </div>
+            </>
           )}
         </div>
       </div>

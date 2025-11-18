@@ -6,6 +6,7 @@ import Index from "./pages/Index";
 import Record from "./pages/Record";
 import Marketplace from "./pages/Marketplace";
 import NotFound from "./pages/NotFound";
+import MySubscriptions from "@/pages/MySubscriptions";
 
 const App = () => (
   <TooltipProvider>
@@ -16,6 +17,9 @@ const App = () => (
         <Route path="/" element={<Index />} />
         <Route path="/record" element={<Record />} />
         <Route path="/marketplace" element={<Marketplace />} />
+        <Route path="/subscriptions" element={<MySubscriptions />} />
+
+
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
