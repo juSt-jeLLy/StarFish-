@@ -22,14 +22,13 @@ type DatasetInfo = {
   txDigest: string;
 };
 
-const PACKAGE_ID = "0xb486f1a7bcca26a704f93e07439ea61d7f04f5855eaea850e40b5371d0b1a6b5"; // Package ID with publish function for WalrusBlob attachment
+const PACKAGE_ID = "0xb486f1a7bcca26a704f93e07439ea61d7f04f5855eaea850e40b5371d0b1a6b5";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
 ];
 
 const WALRUS_PUBLISHER_URL = "https://publisher.walrus-testnet.walrus.space";
-const WALRUS_AGGREGATOR_URL = "https://aggregator.walrus-testnet.walrus.space";
 
 export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
   audioBlob,
@@ -91,11 +90,8 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       console.log('Step 4: Uploading to Walrus...');
       toast.info("Uploading to Walrus...");
       const walrusUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=1`;
-      console.log('Walrus endpoint:', walrusUrl);
       
-      // Convert Uint8Array to Blob for proper upload
       const encryptedBlob = new Blob([encryptedBytes], { type: 'application/octet-stream' });
-      console.log('Encrypted blob size:', encryptedBlob.size, 'bytes');
       
       const response = await fetch(walrusUrl, {
         method: 'PUT',
@@ -108,25 +104,22 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Walrus error response:', errorText);
-        throw new Error(`Walrus upload failed with status ${response.status}: ${errorText}`);
+        throw new Error(`Walrus upload failed: ${errorText}`);
       }
 
       const storageInfo = await response.json();
-      console.log('✓ Walrus storage response received:', storageInfo);
+      console.log('✓ Walrus storage response:', storageInfo);
       
       let blobId: string;
-
       if ('alreadyCertified' in storageInfo) {
         blobId = storageInfo.alreadyCertified.blobId;
-        console.log('✓ Using already certified blob ID:', blobId);
       } else if ('newlyCreated' in storageInfo) {
         blobId = storageInfo.newlyCreated.blobObject.blobId;
-        console.log('✓ Using newly created blob ID:', blobId);
       } else {
         throw new Error('Unexpected storage response format');
       }
 
-      // 5. Create dataset on Sui blockchain (Step 1)
+      // 5. Create dataset on Sui blockchain
       console.log('Step 5: Creating dataset on blockchain...');
       toast.info("Creating dataset on blockchain...");
       const createTx = new Transaction();
@@ -142,129 +135,94 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
         ],
       });
 
-      console.log('✓ Transaction built, executing...');
-      console.log('Step 6: Waiting for wallet signature and execution...');
+      createTx.setGasBudget(10000000);
       
-      // Execute first transaction
-      const datasetId = await new Promise<string>((resolve, reject) => {
+      // Execute and get BOTH datasetId and capId
+      const { datasetId, capId } = await new Promise<{ datasetId: string; capId: string }>((resolve, reject) => {
         signAndExecute(
           { transaction: createTx },
           {
             onSuccess: async (result: any) => {
-              console.log('Step 7: Create dataset transaction executed successfully!');
-              console.log('Transaction digest:', result.digest);
-              console.log('Full result:', JSON.stringify(result, null, 2));
+              console.log('Step 6: Dataset created, transaction:', result.digest);
               
-              // Wait a bit for transaction to be indexed
-              await new Promise(r => setTimeout(r, 2000));
+              // Wait for indexing
+              await new Promise(r => setTimeout(r, 3000));
               
-              // Retry logic to fetch transaction details
-              let extractedId: string | null = null;
-              let retries = 0;
-              const maxRetries = 5;
-              
-              while (!extractedId && retries < maxRetries) {
-                try {
-                  console.log(`Attempt ${retries + 1}/${maxRetries} to fetch transaction details...`);
-                  
-                  const txDetails = await suiClient.getTransactionBlock({
-                    digest: result.digest,
-                    options: {
-                      showEffects: true,
-                      showEvents: true,
-                      showInput: false,
-                    },
-                  });
-                  
-                  console.log('Transaction details fetched:', JSON.stringify(txDetails, null, 2));
-                  
-                  // Try to get from events first
-                  if (txDetails.events && Array.isArray(txDetails.events)) {
-                    console.log('Checking events...');
-                    for (const event of txDetails.events) {
-                      console.log('Event type:', event.type);
-                      if (event.type && event.type.includes('DatasetCreated')) {
-                        const parsedJson = event.parsedJson as any;
-                        if (parsedJson && typeof parsedJson === 'object' && 'dataset_id' in parsedJson) {
-                          extractedId = parsedJson.dataset_id;
-                          console.log('✓ Found dataset ID from DatasetCreated event:', extractedId);
-                          break;
-                        }
-                      }
-                    }
-                  }
-                  
-                  // Fallback: get from created objects
-                  if (!extractedId && txDetails.effects?.created && txDetails.effects.created.length > 0) {
-                    console.log('Checking created objects...');
-                    for (let i = 0; i < txDetails.effects.created.length; i++) {
-                      const created = txDetails.effects.created[i];
-                      console.log(`Created[${i}]:`, JSON.stringify(created, null, 2));
-                      const objectId = created?.reference?.objectId;
-                      const owner = created?.owner;
+              try {
+                // Get transaction details to find created objects
+                const txDetails = await suiClient.getTransactionBlock({
+                  digest: result.digest,
+                  options: {
+                    showEffects: true,
+                    showObjectChanges: true,
+                  },
+                });
+                
+                console.log('Transaction details:', JSON.stringify(txDetails, null, 2));
+                
+                // Find VoiceDataset and DatasetCap from objectChanges
+                let foundDatasetId = '';
+                let foundCapId = '';
+                
+                if (txDetails.objectChanges) {
+                  for (const change of txDetails.objectChanges) {
+                    if (change.type === 'created') {
+                      const objectType = change.objectType || '';
                       
-                      // Look for owned objects (VoiceDataset or DatasetCap)
-                      if (objectId && owner && typeof owner === 'object' && 'AddressOwner' in owner) {
-                        extractedId = objectId;
-                        console.log(`✓ Found dataset ID from effects.created[${i}]:`, extractedId);
-                        break;
+                      // Check if it's VoiceDataset
+                      if (objectType.includes('voice_marketplace::VoiceDataset')) {
+                        foundDatasetId = change.objectId;
+                        console.log('✓ Found VoiceDataset:', foundDatasetId);
+                      }
+                      
+                      // Check if it's DatasetCap
+                      if (objectType.includes('voice_marketplace::DatasetCap')) {
+                        foundCapId = change.objectId;
+                        console.log('✓ Found DatasetCap:', foundCapId);
                       }
                     }
-                  }
-                  
-                  if (extractedId) {
-                    console.log('✓ Dataset ID extracted:', extractedId);
-                    break;
-                  }
-                  
-                  retries++;
-                  if (retries < maxRetries) {
-                    const delayMs = 1000 * Math.pow(2, retries); // Exponential backoff
-                    console.log(`Retrying in ${delayMs}ms...`);
-                    await new Promise(r => setTimeout(r, delayMs));
-                  }
-                } catch (fetchError: any) {
-                  console.warn(`Fetch attempt ${retries + 1} failed:`, fetchError?.message);
-                  retries++;
-                  if (retries < maxRetries) {
-                    const delayMs = 1000 * Math.pow(2, retries);
-                    await new Promise(r => setTimeout(r, delayMs));
                   }
                 }
-              }
-              
-              if (extractedId) {
-                console.log('✓ Dataset ID extracted:', extractedId);
-                resolve(extractedId);
-              } else {
-                console.error('✗ Could not extract dataset ID after retries');
-                console.error('Result object:', result);
-                reject(new Error('Could not extract dataset ID from transaction after retries'));
+                
+                if (!foundDatasetId || !foundCapId) {
+                  console.error('Could not find both objects');
+                  console.log('Found dataset:', foundDatasetId);
+                  console.log('Found cap:', foundCapId);
+                  reject(new Error('Could not find dataset and cap IDs'));
+                  return;
+                }
+                
+                resolve({ datasetId: foundDatasetId, capId: foundCapId });
+              } catch (error) {
+                console.error('Error fetching transaction details:', error);
+                reject(error);
               }
             },
             onError: (error: any) => {
-              console.error('✗ Create dataset transaction error:', error);
-              toast.error("Failed to create dataset: " + (error?.message || 'Unknown error'));
+              console.error('✗ Create dataset error:', error);
               reject(error);
             },
           }
         );
       });
 
-      // 6. Publish (attach) the Walrus blob to the dataset (Step 2)
-      console.log('Step 8: Publishing blob to dataset...');
-      toast.info("Attaching blob to dataset as NFT...");
+      // 6. Publish blob to dataset using the Cap
+      console.log('Step 7: Publishing blob to dataset...');
+      console.log('Using datasetId:', datasetId);
+      console.log('Using capId:', capId);
+      toast.info("Attaching blob to dataset...");
       
       await new Promise<void>((resolve, reject) => {
         const publishTx = new Transaction();
+        publishTx.setGasBudget(10000000);
         
         publishTx.moveCall({
           target: `${PACKAGE_ID}::voice_marketplace::publish_entry`,
           arguments: [
-            publishTx.object(datasetId),        // VoiceDataset object
-            publishTx.object(datasetId),        // DatasetCap (same ID pattern, need to fetch)
-            publishTx.pure.string(blobId),      // blob_id
-            publishTx.object('0x6'),             // Clock object
+            publishTx.object(datasetId),     // VoiceDataset object
+            publishTx.object(capId),         // DatasetCap object (separate!)
+            publishTx.pure.string(blobId),   // blob_id
+            publishTx.object('0x6'),         // Clock object
           ],
         });
 
@@ -272,24 +230,21 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
           { transaction: publishTx },
           {
             onSuccess: (result: any) => {
-              console.log('Step 9: Publish transaction executed successfully!');
-              console.log('Blob attached to dataset, transaction digest:', result.digest);
-              toast.success("Blob attached successfully!");
+              console.log('✓ Blob attached successfully!');
+              toast.success("Dataset published to marketplace!");
               
-              // Store dataset info for display
               const info: DatasetInfo = {
                 blobId: blobId,
                 datasetId: datasetId,
                 txDigest: result.digest,
               };
               setDatasetInfo(info);
-              
               onSuccess(info);
               setIsUploading(false);
               resolve();
             },
             onError: (error: any) => {
-              console.error('✗ Publish transaction error:', error);
+              console.error('✗ Publish error:', error);
               toast.error("Failed to attach blob: " + (error?.message || 'Unknown error'));
               setIsUploading(false);
               reject(error);
@@ -298,11 +253,10 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
         );
       });
 
-      console.log('=== Upload Completed Successfully ===');
+      console.log('=== Upload Completed ===');
     } catch (error: any) {
       console.error('=== Upload Failed ===');
       console.error('Error:', error);
-      console.error('Error stack:', error?.stack);
       toast.error(`Upload failed: ${error?.message || 'Unknown error'}`);
       setIsUploading(false);
     }
@@ -344,7 +298,6 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
               <h4 className="font-bold text-primary mb-4">✓ Dataset Published Successfully!</h4>
               
               <div className="space-y-4">
-                {/* Walrus Blob */}
                 <div className="border border-secondary/30 rounded p-3 bg-background/30">
                   <dt className="text-muted-foreground font-semibold mb-2">Walrus Encrypted Blob</dt>
                   <dd className="text-foreground break-all font-mono text-xs mb-3 p-2 bg-background rounded">{datasetInfo.blobId}</dd>
@@ -358,7 +311,6 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
                   </a>
                 </div>
                 
-                {/* Sui Object */}
                 <div className="border border-accent/30 rounded p-3 bg-background/30">
                   <dt className="text-muted-foreground font-semibold mb-2">Sui Blockchain Object</dt>
                   <dd className="text-foreground break-all font-mono text-xs mb-3 p-2 bg-background rounded">{datasetInfo.datasetId}</dd>
@@ -390,4 +342,5 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
     </Card>
   );
 };
+
 export default WalrusEncryptUpload;

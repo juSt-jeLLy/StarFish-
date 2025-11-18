@@ -6,7 +6,6 @@ import { Database, Languages, ShoppingCart, Loader2, Filter } from "lucide-react
 import Navigation from "@/components/Navigation";
 import spaceBg from "@/assets/space-bg.jpg";
 import { Transaction } from "@mysten/sui/transactions";
-import { coinWithBalance } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
 const PACKAGE_ID = "0xb486f1a7bcca26a704f93e07439ea61d7f04f5855eaea850e40b5371d0b1a6b5";
@@ -42,7 +41,7 @@ const Marketplace = () => {
 
   const loadMarketplace = async () => {
     try {
-      // Get all VoiceDataset objects
+      // Get all VoiceDataset objects from events
       const allObjects = await suiClient.queryEvents({
         query: {
           MoveEventType: `${PACKAGE_ID}::voice_marketplace::DatasetCreated`,
@@ -57,7 +56,7 @@ const Marketplace = () => {
           try {
             const dataset = await suiClient.getObject({
               id: datasetId,
-              options: { showContent: true },
+              options: { showContent: true, showOwner: true },
             });
 
             const fields = (dataset.data?.content as any)?.fields;
@@ -116,60 +115,87 @@ const Marketplace = () => {
     }
   };
 
-const handlePurchase = async (dataset: DatasetData) => {
-  if (!currentAccount?.address) {
-    toast.error("Please connect your wallet");
-    return;
-  }
+  const handlePurchase = async (dataset: DatasetData) => {
+    if (!currentAccount?.address) {
+      toast.error("Please connect your wallet");
+      return;
+    }
 
-  if (dataset.creator === currentAccount.address) {
-    toast.error("You cannot purchase your own dataset");
-    return;
-  }
+    if (dataset.creator === currentAccount.address) {
+      toast.error("You cannot purchase your own dataset");
+      return;
+    }
 
-  if (mySubscriptions.has(dataset.id)) {
-    toast.info("You already own this dataset");
-    return;
-  }
+    if (mySubscriptions.has(dataset.id)) {
+      toast.info("You already own this dataset");
+      return;
+    }
 
-  setPurchasing(dataset.id);
+    setPurchasing(dataset.id);
 
-  try {
-    const tx = new Transaction();
-    tx.setGasBudget(10000000);
+    try {
+      // Get user's SUI coins
+      const coins = await suiClient.getCoins({
+        owner: currentAccount.address,
+        coinType: '0x2::sui::SUI',
+      });
 
-    // OPTION 1: Use splitCoins to create the payment coin from gas
-    const [coin] = tx.splitCoins(tx.gas, [SUBSCRIPTION_FEE]);
-    
-    tx.moveCall({
-      target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
-      arguments: [
-        coin, // Use the split coin instead of coinWithBalance
-        tx.object(dataset.id),
-        tx.object('0x6'), // Clock object
-      ],
-    });
-
-    signAndExecute(
-      { transaction: tx },
-      {
-        onSuccess: () => {
-          toast.success("Purchase successful! Check 'My Subscriptions'");
-          loadMarketplace();
-        },
-        onError: (error) => {
-          console.error("Purchase error:", error);
-          toast.error("Purchase failed");
-        },
+      if (coins.data.length === 0) {
+        toast.error("No SUI coins found in wallet");
+        setPurchasing(null);
+        return;
       }
-    );
-  } catch (error: any) {
-    console.error("Purchase error:", error);
-    toast.error(`Purchase failed: ${error?.message || 'Unknown error'}`);
-  } finally {
-    setPurchasing(null);
-  }
-};
+
+      // Find a coin with enough balance
+      const suitableCoin = coins.data.find(
+        coin => BigInt(coin.balance) >= BigInt(SUBSCRIPTION_FEE)
+      );
+
+      if (!suitableCoin) {
+        toast.error("Insufficient SUI balance (need 0.01 SUI)");
+        setPurchasing(null);
+        return;
+      }
+
+      const tx = new Transaction();
+      tx.setGasBudget(10000000);
+
+      // Split the exact amount from a suitable coin
+      const [paymentCoin] = tx.splitCoins(
+        tx.object(suitableCoin.coinObjectId),
+        [SUBSCRIPTION_FEE]
+      );
+      
+      // Call subscribe_entry which will transfer the subscription to sender
+      tx.moveCall({
+        target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
+        arguments: [
+          paymentCoin,             // Payment coin (split from user's SUI coin)
+          tx.object(dataset.id),   // VoiceDataset object
+          tx.object('0x6'),        // Clock object
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: () => {
+            toast.success("Purchase successful! Check 'My Subscriptions'");
+            loadMarketplace();
+          },
+          onError: (error) => {
+            console.error("Purchase error:", error);
+            toast.error("Purchase failed: " + (error?.message || 'Unknown error'));
+          },
+        }
+      );
+    } catch (error: any) {
+      console.error("Purchase error:", error);
+      toast.error(`Purchase failed: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setPurchasing(null);
+    }
+  };
 
   const filteredDatasets = selectedLanguage
     ? datasets.filter(d => d.language === selectedLanguage)
