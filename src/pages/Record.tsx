@@ -9,6 +9,12 @@ import { AudioRecorder, downloadAudio } from "@/utils/audioRecorder";
 import { toast } from "sonner";
 import spaceBg from "@/assets/space-bg.jpg";
 
+interface DatasetInfo {
+  blobId: string;
+  datasetId: string;
+  txDigest: string;
+}
+
 const languages = [
   { name: "English", dialects: ["American", "British", "Australian", "Indian"] },
   { name: "Spanish", dialects: ["Castilian", "Mexican", "Argentine", "Colombian"] },
@@ -43,20 +49,20 @@ const Record = () => {
   const [audioRecorder, setAudioRecorder] = useState<AudioRecorder | null>(null);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [visualizerData, setVisualizerData] = useState<Uint8Array | null>(null);
-  const [publishedDatasetId, setPublishedDatasetId] = useState<string>("");
+  const [publishedDataset, setPublishedDataset] = useState<DatasetInfo | null>(null);
 
   const handleLanguageSelect = (language: string) => {
     setSelectedLanguage(language);
     setSelectedDialect("");
     setCurrentText("");
     setRecordedBlob(null);
-    setPublishedDatasetId("");
+    setPublishedDataset(null);
   };
 
   const handleDialectSelect = (dialect: string) => {
     setSelectedDialect(dialect);
     setRecordedBlob(null);
-    setPublishedDatasetId("");
+    setPublishedDataset(null);
   };
 
   const handleDurationSelect = (duration: string) => {
@@ -64,7 +70,7 @@ const Record = () => {
     const randomText = sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
     setCurrentText(randomText);
     setRecordedBlob(null);
-    setPublishedDatasetId("");
+    setPublishedDataset(null);
   };
 
   const toggleRecording = async () => {
@@ -88,7 +94,7 @@ const Record = () => {
         setAudioRecorder(recorder);
         setIsRecording(true);
         setRecordedBlob(null);
-        setPublishedDatasetId("");
+        setPublishedDataset(null);
         toast.success("Recording started!");
       } catch (error) {
         console.error("Error starting recording:", error);
@@ -106,8 +112,8 @@ const Record = () => {
     }
   };
 
-  const handlePublishSuccess = (datasetId: string) => {
-    setPublishedDatasetId(datasetId);
+  const handlePublishSuccess = (datasetInfo: DatasetInfo) => {
+    setPublishedDataset(datasetInfo);
     toast.success("Dataset published to marketplace!");
   };
 
@@ -115,7 +121,7 @@ const Record = () => {
     setSelectedDuration("");
     setCurrentText("");
     setRecordedBlob(null);
-    setPublishedDatasetId("");
+    setPublishedDataset(null);
   };
 
   return (
@@ -253,7 +259,7 @@ const Record = () => {
                   <Button
                     size="lg"
                     onClick={toggleRecording}
-                    disabled={!currentText || publishedDatasetId !== ""}
+                    disabled={!currentText || publishedDataset !== null}
                     className={`${
                       isRecording
                         ? "bg-destructive hover:bg-destructive/90"
@@ -273,7 +279,7 @@ const Record = () => {
                     )}
                   </Button>
 
-                  {recordedBlob && !isRecording && !publishedDatasetId && (
+                  {recordedBlob && !isRecording && !publishedDataset && (
                     <Button
                       size="lg"
                       onClick={handleDownload}
@@ -291,13 +297,13 @@ const Record = () => {
                   </p>
                 )}
 
-                {recordedBlob && !isRecording && !publishedDatasetId && (
+                {recordedBlob && !isRecording && !publishedDataset && (
                   <p className="text-center text-accent font-bold mt-4">
                     RECORDING COMPLETE! Download or publish to marketplace below.
                   </p>
                 )}
 
-                {publishedDatasetId && (
+                {publishedDataset && (
                   <div className="text-center mt-4 space-y-4">
                     <CheckCircle className="w-16 h-16 text-accent mx-auto mb-2" />
                     <div>
@@ -306,39 +312,45 @@ const Record = () => {
                       </p>
                     </div>
                     
-                    <div className="bg-background/50 border border-accent/30 rounded-lg p-4 space-y-3">
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-2">Dataset Object ID:</p>
+                    <div className="bg-background/50 border border-accent/30 rounded-lg p-4 space-y-6">
+                      {/* Walrus Blob */}
+                      <div className="border border-secondary/30 rounded p-3 bg-background/30">
+                        <dt className="text-muted-foreground font-semibold mb-2">Walrus Encrypted Blob</dt>
+                        <dd className="text-foreground break-all font-mono text-xs mb-3 p-2 bg-background rounded">{publishedDataset.blobId}</dd>
                         <a
-                          href={`https://testnet.suivision.xyz/object/${publishedDatasetId}`}
+                          href={`https://aggregator.walrus-testnet.walrus.space/v1/blobs/${publishedDataset.blobId}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-accent hover:text-accent/80 underline font-mono text-xs break-all inline-block"
+                          className="text-secondary hover:text-secondary/80 underline font-semibold"
                         >
-                          {publishedDatasetId}
+                          View Encrypted Blob on Walrus →
                         </a>
                       </div>
                       
-                      <div className="flex flex-col gap-2 pt-2">
+                      {/* Sui Object */}
+                      <div className="border border-accent/30 rounded p-3 bg-background/30">
+                        <dt className="text-muted-foreground font-semibold mb-2">Sui Blockchain Object</dt>
+                        <dd className="text-foreground break-all font-mono text-xs mb-3 p-2 bg-background rounded">{publishedDataset.datasetId}</dd>
                         <a
-                          href={`https://testnet.suivision.xyz/object/${publishedDatasetId}`}
+                          href={`https://suiscan.xyz/testnet/object/${publishedDataset.datasetId}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-accent hover:text-accent/80 underline font-bold"
+                          className="text-accent hover:text-accent/80 underline font-semibold"
                         >
-                          → View on Sui Explorer
+                          View on Suiscan Explorer →
                         </a>
-                        <p className="text-xs text-muted-foreground">
-                          Your dataset is now live on the blockchain and available for purchase!
-                        </p>
                       </div>
+
+                      <p className="text-xs text-muted-foreground">
+                        Your dataset is now live on the blockchain and available for purchase!
+                      </p>
                     </div>
                   </div>
                 )}
               </Card>
 
               {/* Upload to Marketplace */}
-              {recordedBlob && !isRecording && !publishedDatasetId && (
+              {recordedBlob && !isRecording && !publishedDataset && (
                 <WalrusEncryptUpload
                   audioBlob={recordedBlob}
                   language={selectedLanguage}

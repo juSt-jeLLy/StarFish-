@@ -9,12 +9,12 @@ import { Transaction } from "@mysten/sui/transactions";
 import { coinWithBalance } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0x02e421990f3349629427fdb6d090ea5c56e1e8f90f484deb8b15a97127f65de1";
+const PACKAGE_ID = "0xb39bacd6af7db0417da87846d032573a315ac309e32aca72c743e2e2444e80d7";
 const SUBSCRIPTION_FEE = 10_000_000; // 0.01 SUI in MIST
 
 interface DatasetData {
   id: string;
-  creator: address;
+  creator: string;
   language: string;
   dialect: string;
   duration: string;

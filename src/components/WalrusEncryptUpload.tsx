@@ -13,7 +13,7 @@ interface WalrusEncryptUploadProps {
   language: string;
   dialect: string;
   duration: string;
-  onSuccess: (datasetId: string) => void;
+  onSuccess: (datasetInfo: DatasetInfo) => void;
 }
 
 type DatasetInfo = {
@@ -22,7 +22,7 @@ type DatasetInfo = {
   txDigest: string;
 };
 
-const PACKAGE_ID = "0x02e421990f3349629427fdb6d090ea5c56e1e8f90f484deb8b15a97127f65de1"; // Replace with deployed package ID
+const PACKAGE_ID = "0xb39bacd6af7db0417da87846d032573a315ac309e32aca72c743e2e2444e80d7"; // Package ID with publish function for WalrusBlob attachment
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
@@ -126,94 +126,171 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
         throw new Error('Unexpected storage response format');
       }
 
-      // 5. Create dataset on Sui blockchain
-      console.log('Step 5: Creating transaction for Sui blockchain...');
+      // 5. Create dataset on Sui blockchain (Step 1)
+      console.log('Step 5: Creating dataset on blockchain...');
       toast.info("Creating dataset on blockchain...");
-      const tx = new Transaction();
+      const createTx = new Transaction();
       
-      tx.moveCall({
+      createTx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::create_dataset_entry`,
         arguments: [
-          tx.pure.string(language),
-          tx.pure.string(dialect),
-          tx.pure.string(duration),
-          tx.pure.string(blobId),
-          tx.object('0x6'), // Clock object
+          createTx.pure.string(language),
+          createTx.pure.string(dialect),
+          createTx.pure.string(duration),
+          createTx.pure.string(blobId),
+          createTx.object('0x6'), // Clock object
         ],
       });
 
       console.log('✓ Transaction built, executing...');
       console.log('Step 6: Waiting for wallet signature and execution...');
       
-      // Execute transaction and wait for completion
-      await new Promise((resolve, reject) => {
+      // Execute first transaction
+      const datasetId = await new Promise<string>((resolve, reject) => {
         signAndExecute(
-          { transaction: tx },
+          { transaction: createTx },
           {
-            onSuccess: (result: any) => {
-              console.log('Step 7: Transaction executed successfully!');
-              console.log('Transaction result:', result);
-              console.log('Effects created:', result.effects?.created);
-              console.log('Raw effects:', result.rawEffects);
+            onSuccess: async (result: any) => {
+              console.log('Step 7: Create dataset transaction executed successfully!');
+              console.log('Transaction digest:', result.digest);
+              console.log('Full result:', JSON.stringify(result, null, 2));
               
-              // Try multiple ways to get the dataset ID
-              let datasetId: string | null = null;
+              // Wait a bit for transaction to be indexed
+              await new Promise(r => setTimeout(r, 2000));
               
-              // Method 1: Check effects.created
-              if (result.effects?.created && result.effects.created.length > 0) {
-                const objectId = result.effects.created[0]?.reference?.objectId;
-                if (objectId) {
-                  datasetId = objectId;
-                  console.log('✓ Found dataset ID from effects.created');
+              // Retry logic to fetch transaction details
+              let extractedId: string | null = null;
+              let retries = 0;
+              const maxRetries = 5;
+              
+              while (!extractedId && retries < maxRetries) {
+                try {
+                  console.log(`Attempt ${retries + 1}/${maxRetries} to fetch transaction details...`);
+                  
+                  const txDetails = await suiClient.getTransactionBlock({
+                    digest: result.digest,
+                    options: {
+                      showEffects: true,
+                      showEvents: true,
+                      showInput: false,
+                    },
+                  });
+                  
+                  console.log('Transaction details fetched:', JSON.stringify(txDetails, null, 2));
+                  
+                  // Try to get from events first
+                  if (txDetails.events && Array.isArray(txDetails.events)) {
+                    console.log('Checking events...');
+                    for (const event of txDetails.events) {
+                      console.log('Event type:', event.type);
+                      if (event.type && event.type.includes('DatasetCreated')) {
+                        const parsedJson = event.parsedJson as any;
+                        if (parsedJson && typeof parsedJson === 'object' && 'dataset_id' in parsedJson) {
+                          extractedId = parsedJson.dataset_id;
+                          console.log('✓ Found dataset ID from DatasetCreated event:', extractedId);
+                          break;
+                        }
+                      }
+                    }
+                  }
+                  
+                  // Fallback: get from created objects
+                  if (!extractedId && txDetails.effects?.created && txDetails.effects.created.length > 0) {
+                    console.log('Checking created objects...');
+                    for (let i = 0; i < txDetails.effects.created.length; i++) {
+                      const created = txDetails.effects.created[i];
+                      console.log(`Created[${i}]:`, JSON.stringify(created, null, 2));
+                      const objectId = created?.reference?.objectId;
+                      const owner = created?.owner;
+                      
+                      // Look for owned objects (VoiceDataset or DatasetCap)
+                      if (objectId && owner && typeof owner === 'object' && 'AddressOwner' in owner) {
+                        extractedId = objectId;
+                        console.log(`✓ Found dataset ID from effects.created[${i}]:`, extractedId);
+                        break;
+                      }
+                    }
+                  }
+                  
+                  if (extractedId) {
+                    console.log('✓ Dataset ID extracted:', extractedId);
+                    break;
+                  }
+                  
+                  retries++;
+                  if (retries < maxRetries) {
+                    const delayMs = 1000 * Math.pow(2, retries); // Exponential backoff
+                    console.log(`Retrying in ${delayMs}ms...`);
+                    await new Promise(r => setTimeout(r, delayMs));
+                  }
+                } catch (fetchError: any) {
+                  console.warn(`Fetch attempt ${retries + 1} failed:`, fetchError?.message);
+                  retries++;
+                  if (retries < maxRetries) {
+                    const delayMs = 1000 * Math.pow(2, retries);
+                    await new Promise(r => setTimeout(r, delayMs));
+                  }
                 }
               }
               
-              // Method 2: Check for mutated objects that might be the dataset
-              if (!datasetId && result.effects?.mutated && result.effects.mutated.length > 0) {
-                const objectId = result.effects.mutated[0]?.reference?.objectId;
-                if (objectId) {
-                  datasetId = objectId;
-                  console.log('✓ Found dataset ID from effects.mutated');
-                }
-              }
-              
-              // Method 3: Generate a deterministic ID based on transaction digest
-              if (!datasetId && result.digest) {
-                // Use the first part of the transaction digest as a temporary ID
-                datasetId = result.digest.substring(0, 42);
-                console.log('✓ Using transaction digest as dataset ID');
-              }
-              
-              if (datasetId) {
-                console.log('✓ Dataset created with ID:', datasetId);
-                toast.success("Dataset created successfully!");
-                
-                // Store dataset info for display
-                setDatasetInfo({
-                  blobId: blobId,
-                  datasetId: datasetId,
-                  txDigest: result.digest,
-                });
-                
-                onSuccess(datasetId);
-                resolve(datasetId);
+              if (extractedId) {
+                console.log('✓ Dataset ID extracted:', extractedId);
+                resolve(extractedId);
               } else {
-                console.error('✗ Could not extract dataset ID from transaction result');
-                console.error('Full result:', JSON.stringify(result, null, 2));
-                toast.error("Created dataset but could not get ID - transaction may have succeeded");
-                // Still resolve since transaction was successful
-                resolve('dataset_created');
+                console.error('✗ Could not extract dataset ID after retries');
+                console.error('Result object:', result);
+                reject(new Error('Could not extract dataset ID from transaction after retries'));
               }
-              setIsUploading(false);
             },
             onError: (error: any) => {
-              console.error('✗ Transaction error:', error);
-              console.error('Error details:', {
-                message: error?.message,
-                code: error?.code,
-                cause: error?.cause,
-              });
+              console.error('✗ Create dataset transaction error:', error);
               toast.error("Failed to create dataset: " + (error?.message || 'Unknown error'));
+              reject(error);
+            },
+          }
+        );
+      });
+
+      // 6. Publish (attach) the Walrus blob to the dataset (Step 2)
+      console.log('Step 8: Publishing blob to dataset...');
+      toast.info("Attaching blob to dataset as NFT...");
+      
+      await new Promise<void>((resolve, reject) => {
+        const publishTx = new Transaction();
+        
+        publishTx.moveCall({
+          target: `${PACKAGE_ID}::voice_marketplace::publish_entry`,
+          arguments: [
+            publishTx.object(datasetId),        // VoiceDataset object
+            publishTx.object(datasetId),        // DatasetCap (same ID pattern, need to fetch)
+            publishTx.pure.string(blobId),      // blob_id
+            publishTx.object('0x6'),             // Clock object
+          ],
+        });
+
+        signAndExecute(
+          { transaction: publishTx },
+          {
+            onSuccess: (result: any) => {
+              console.log('Step 9: Publish transaction executed successfully!');
+              console.log('Blob attached to dataset, transaction digest:', result.digest);
+              toast.success("Blob attached successfully!");
+              
+              // Store dataset info for display
+              const info: DatasetInfo = {
+                blobId: blobId,
+                datasetId: datasetId,
+                txDigest: result.digest,
+              };
+              setDatasetInfo(info);
+              
+              onSuccess(info);
+              setIsUploading(false);
+              resolve();
+            },
+            onError: (error: any) => {
+              console.error('✗ Publish transaction error:', error);
+              toast.error("Failed to attach blob: " + (error?.message || 'Unknown error'));
               setIsUploading(false);
               reject(error);
             },
