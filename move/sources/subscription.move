@@ -29,6 +29,7 @@ public struct VoiceDataset has key {
     dialect: String,
     duration: String,
     blob_id: String,
+    encryption_id: vector<u8>,  // ← ADD THIS!
     created_at: u64,
 }
 
@@ -71,6 +72,7 @@ public fun create_dataset(
     dialect: String,
     duration: String,
     blob_id: String,
+    encryption_id: vector<u8>,  // ← ADD THIS PARAMETER
     c: &Clock,
     ctx: &mut TxContext,
 ): DatasetCap {
@@ -84,6 +86,7 @@ public fun create_dataset(
         dialect,
         duration,
         blob_id,
+        encryption_id,  // ← STORE IT!
         created_at: dataset_timestamp,
     };
     
@@ -115,10 +118,12 @@ entry fun create_dataset_entry(
     dialect: String,
     duration: String,
     blob_id: String,
+        encryption_id: vector<u8>,  // ← ADD THIS PARAMETER
+
     c: &Clock,
     ctx: &mut TxContext,
 ) {
-    let cap = create_dataset(language, dialect, duration, blob_id, c, ctx);
+    let cap = create_dataset(language, dialect, duration, blob_id, encryption_id, c, ctx);
     // Transfer the Cap to sender
     transfer::transfer(cap, ctx.sender());
 }

@@ -10,7 +10,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { fromHex, toHex } from '@mysten/sui/utils';
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0x97f79c149255c7d67187df7ff2ff0a0e1133315c08ab907aaa87cb61281c7a5d";
+const PACKAGE_ID = "0x0085237749e83235fc57d3bcf85b545eba743a3491b1dc9c3e26b5006edf17f7";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
@@ -25,6 +25,7 @@ interface SubscriptionData {
   dialect: string;
   duration: string;
   blobId: string;
+  encryptionId: string; // ← ADD THIS!
 }
 
 const MySubscriptions = () => {
@@ -53,177 +54,196 @@ const MySubscriptions = () => {
     }
   }, [currentAccount?.address]);
 
-const loadSubscriptions = async () => {
+  const loadSubscriptions = async () => {
     if (!currentAccount?.address) return;
 
     try {
-        const result = await suiClient.getOwnedObjects({
-            owner: currentAccount.address,
-            options: { showContent: true, showType: true },
-            filter: {
-                StructType: `${PACKAGE_ID}::voice_marketplace::Subscription`,
+      const result = await suiClient.getOwnedObjects({
+        owner: currentAccount.address,
+        options: { showContent: true, showType: true },
+        filter: {
+          StructType: `${PACKAGE_ID}::voice_marketplace::Subscription`,
+        },
+      });
+
+      const subsData: SubscriptionData[] = await Promise.all(
+        result.data.map(async (obj) => {
+          const fields = (obj.data?.content as any)?.fields;
+          if (!fields) return null;
+
+          // Get dataset details
+          const dataset = await suiClient.getObject({
+            id: fields.dataset_id,
+            options: { 
+              showContent: true,
+              showBcs: true,
             },
-        });
+          });
 
-        const subsData: SubscriptionData[] = await Promise.all(
-            result.data.map(async (obj) => {
-                const fields = (obj.data?.content as any)?.fields;
-                if (!fields) return null;
+          const datasetFields = (dataset.data?.content as any)?.fields;
+          if (!datasetFields) return null;
 
-                // Get dataset details
-                const dataset = await suiClient.getObject({
-                    id: fields.dataset_id,
-                    options: { 
-                        showContent: true,
-                        showBcs: true,  // Add this
-                    },
-                });
+          // **CRITICAL: Get the encryption_id from the dataset**
+          let encryptionId = "";
+          if (datasetFields.encryption_id) {
+            // Convert the vector<u8> to hex string
+            const encryptionIdBytes = datasetFields.encryption_id;
+            encryptionId = toHex(new Uint8Array(encryptionIdBytes));
+            console.log('✓ Found encryption_id:', encryptionId);
+          } else {
+            console.warn('No encryption_id found in dataset');
+            return null; // Skip if no encryption ID
+          }
 
-                const datasetFields = (dataset.data?.content as any)?.fields;
-                if (!datasetFields) return null;
-
-                // **NEW: Get the WalrusBlob from dynamic field**
-                let actualBlobId = datasetFields.blob_id; // fallback
-                
-                try {
-                    const dynamicFields = await suiClient.getDynamicFields({
-                        parentId: fields.dataset_id,
-                    });
-                    
-                    // Find the walrus_blob dynamic field
-                    const walrusBlobField = dynamicFields.data.find(
-                        df => df.name.value === 'walrus_blob' || 
-                             df.name.value === Buffer.from('walrus_blob').toString('hex')
-                    );
-                    
-                    if (walrusBlobField) {
-                        const walrusBlob = await suiClient.getObject({
-                            id: walrusBlobField.objectId,
-                            options: { showContent: true },
-                        });
-                        const walrusBlobFields = (walrusBlob.data?.content as any)?.fields;
-                        if (walrusBlobFields?.blob_id) {
-                            actualBlobId = walrusBlobFields.blob_id;
-                            console.log('Using blob_id from dynamic field:', actualBlobId);
-                        }
-                    }
-                } catch (error) {
-                    console.warn('Could not fetch dynamic field, using fallback blob_id');
-                }
-
-                return {
-                    id: fields.id.id,
-                    datasetId: fields.dataset_id,
-                    createdAt: parseInt(fields.created_at),
-                    language: datasetFields.language,
-                    dialect: datasetFields.dialect,
-                    duration: datasetFields.duration,
-                    blobId: actualBlobId,  // Use the correct blob_id
-                };
-            })
-        );
-
-        setSubscriptions(subsData.filter(Boolean) as SubscriptionData[]);
-    } catch (error) {
-        console.error("Error loading subscriptions:", error);
-    } finally {
-        setLoading(false);
-    }
-};
-
-  const handleDownload = async (sub: SubscriptionData) => {
-    if (!currentAccount?.address) return;
-
-    setDownloading(sub.id);
-
-    try {
-      // Create or use existing session key
-      let currentSessionKey = sessionKey;
-      
-      if (!currentSessionKey || currentSessionKey.isExpired() || 
-          currentSessionKey.getAddress() !== currentAccount.address) {
-        const newSessionKey = await SessionKey.create({
-          address: currentAccount.address,
-          packageId: PACKAGE_ID,
-          ttlMin: 10,
-          suiClient,
-        });
-
-        await new Promise<void>((resolve, reject) => {
-          signPersonalMessage(
-            { message: newSessionKey.getPersonalMessage() },
-            {
-              onSuccess: async (result) => {
-                await newSessionKey.setPersonalMessageSignature(result.signature);
-                setSessionKey(newSessionKey);
-                currentSessionKey = newSessionKey;
-                resolve();
-              },
-              onError: reject,
+          // Get the WalrusBlob from dynamic field
+          let actualBlobId = datasetFields.blob_id; // fallback
+          
+          try {
+            const dynamicFields = await suiClient.getDynamicFields({
+              parentId: fields.dataset_id,
+            });
+            
+            // Find the walrus_blob dynamic field
+            const walrusBlobField = dynamicFields.data.find(
+              df => df.name.value === 'walrus_blob' || 
+                   df.name.value === Buffer.from('walrus_blob').toString('hex')
+            );
+            
+            if (walrusBlobField) {
+              const walrusBlob = await suiClient.getObject({
+                id: walrusBlobField.objectId,
+                options: { showContent: true },
+              });
+              const walrusBlobFields = (walrusBlob.data?.content as any)?.fields;
+              if (walrusBlobFields?.blob_id) {
+                actualBlobId = walrusBlobFields.blob_id;
+                console.log('Using blob_id from dynamic field:', actualBlobId);
+              }
             }
-          );
-        });
-      }
+          } catch (error) {
+            console.warn('Could not fetch dynamic field, using fallback blob_id');
+          }
 
-      if (!currentSessionKey) throw new Error("Failed to create session key");
+          return {
+            id: fields.id.id,
+            datasetId: fields.dataset_id,
+            createdAt: parseInt(fields.created_at),
+            language: datasetFields.language,
+            dialect: datasetFields.dialect,
+            duration: datasetFields.duration,
+            blobId: actualBlobId,
+            encryptionId: encryptionId, // ← STORE THE ENCRYPTION ID!
+          };
+        })
+      );
 
-      // Download encrypted data from Walrus
-      toast.info("Downloading from Walrus...");
-      const response = await fetch(`${WALRUS_AGGREGATOR_URL}${sub.blobId}`);
-      if (!response.ok) throw new Error("Failed to download from Walrus");
-      
-      const encryptedData = new Uint8Array(await response.arrayBuffer());
-
-      // Get decryption keys
-      const id = toHex(fromHex(sub.datasetId));
-      const tx = new Transaction();
-      tx.moveCall({
-        target: `${PACKAGE_ID}::voice_marketplace::seal_approve`,
-        arguments: [
-          tx.pure.vector('u8', fromHex(id)),
-          tx.object(sub.id),
-          tx.object(sub.datasetId),
-        ],
-      });
-
-      const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
-      
-      toast.info("Fetching decryption keys...");
-      await client.fetchKeys({
-        ids: [id],
-        txBytes,
-        sessionKey: currentSessionKey,
-        threshold: 2,
-      });
-
-      // Decrypt the data
-      toast.info("Decrypting audio...");
-      const decryptedData = await client.decrypt({
-        data: encryptedData,
-        sessionKey: currentSessionKey,
-        txBytes,
-      });
-
-      // Download the file
-      const decryptedBuffer = new Uint8Array(decryptedData);
-      const blob = new Blob([decryptedBuffer], { type: 'audio/mp3' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `voice-${sub.language}-${sub.dialect}-${Date.now()}.mp3`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      toast.success("Download complete!");
+      setSubscriptions(subsData.filter(Boolean) as SubscriptionData[]);
     } catch (error) {
-      console.error("Download error:", error);
-      toast.error(`Download failed: ${error.message}`);
+      console.error("Error loading subscriptions:", error);
     } finally {
-      setDownloading(null);
+      setLoading(false);
     }
   };
+
+const handleDownload = async (sub: SubscriptionData) => {
+  if (!currentAccount?.address) return;
+
+  setDownloading(sub.id);
+
+  try {
+    // Create or use existing session key
+    let currentSessionKey = sessionKey;
+    
+    if (!currentSessionKey || currentSessionKey.isExpired() || 
+        currentSessionKey.getAddress() !== currentAccount.address) {
+      const newSessionKey = await SessionKey.create({
+        address: currentAccount.address,
+        packageId: PACKAGE_ID,
+        ttlMin: 10,
+        suiClient,
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        signPersonalMessage(
+          { message: newSessionKey.getPersonalMessage() },
+          {
+            onSuccess: async (result) => {
+              await newSessionKey.setPersonalMessageSignature(result.signature);
+              setSessionKey(newSessionKey);
+              currentSessionKey = newSessionKey;
+              resolve();
+            },
+            onError: reject,
+          }
+        );
+      });
+    }
+
+    if (!currentSessionKey) throw new Error("Failed to create session key");
+
+    // Download encrypted data from Walrus
+    toast.info("Downloading from Walrus...");
+    const response = await fetch(`${WALRUS_AGGREGATOR_URL}${sub.blobId}`);
+    if (!response.ok) throw new Error("Failed to download from Walrus");
+    
+    const encryptedData = new Uint8Array(await response.arrayBuffer());
+
+    // Use the stored encryption ID
+    const idBytes = fromHex(sub.encryptionId);
+    
+    // Build transaction - YOUR DEPLOYED CONTRACT EXPECTS 4 ARGUMENTS
+    const tx = new Transaction();
+    tx.moveCall({
+      target: `${PACKAGE_ID}::voice_marketplace::seal_approve`,
+      arguments: [
+        tx.pure.vector('u8', idBytes),        // encryption ID
+        tx.object(sub.id),                    // Subscription
+        tx.object(sub.datasetId),             // VoiceDataset  
+        tx.object('0x6'),                     // Clock object - REQUIRED!
+      ],
+    });
+
+    const txBytes = await tx.build({ 
+      client: suiClient, 
+      onlyTransactionKind: true 
+    });
+    
+    toast.info("Fetching decryption keys...");
+    await client.fetchKeys({
+      ids: [sub.encryptionId],
+      txBytes,
+      sessionKey: currentSessionKey,
+      threshold: 2,
+    });
+
+    // Decrypt the data
+    toast.info("Decrypting audio...");
+    const decryptedData = await client.decrypt({
+      data: encryptedData,
+      sessionKey: currentSessionKey,
+      txBytes,
+    });
+
+    // Download the file
+    const decryptedBuffer = new Uint8Array(decryptedData);
+    const blob = new Blob([decryptedBuffer], { type: 'audio/mp3' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `voice-${sub.language}-${sub.dialect}-${Date.now()}.mp3`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast.success("Download complete!");
+  } catch (error: any) {
+    console.error("Download error:", error);
+    toast.error(`Download failed: ${error.message}`);
+  } finally {
+    setDownloading(null);
+  }
+};
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -279,6 +299,7 @@ const loadSubscriptions = async () => {
                     <div className="space-y-1 text-sm text-muted-foreground">
                       <p>Duration: {sub.duration}</p>
                       <p>Purchased: {new Date(sub.createdAt).toLocaleDateString()}</p>
+                      <p className="text-xs break-all">Encryption ID: {sub.encryptionId.slice(0, 16)}...</p>
                     </div>
                   </div>
 

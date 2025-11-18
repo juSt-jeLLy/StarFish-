@@ -22,7 +22,7 @@ type DatasetInfo = {
   txDigest: string;
 };
 
-const PACKAGE_ID = "0x97f79c149255c7d67187df7ff2ff0a0e1133315c08ab907aaa87cb61281c7a5d";
+const PACKAGE_ID = "0x0085237749e83235fc57d3bcf85b545eba743a3491b1dc9c3e26b5006edf17f7";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
@@ -68,12 +68,12 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       const audioData = new Uint8Array(arrayBuffer);
       console.log('✓ Audio file read:', audioData.length, 'bytes');
 
-      // 2. Create temporary dataset ID for encryption
-      console.log('Step 2: Creating temporary dataset ID...');
-      const tempDatasetId = crypto.getRandomValues(new Uint8Array(32));
-      const nonce = crypto.getRandomValues(new Uint8Array(5));
-      const id = toHex(new Uint8Array([...tempDatasetId, ...nonce]));
-      console.log('✓ Dataset ID created:', id);
+   console.log('Step 2: Creating encryption ID...');
+const tempDatasetId = crypto.getRandomValues(new Uint8Array(32));
+const nonce = crypto.getRandomValues(new Uint8Array(5));
+const encryptionIdBytes = new Uint8Array([...tempDatasetId, ...nonce]);
+const id = toHex(encryptionIdBytes);
+console.log('✓ Encryption ID created:', id);
 
       // 3. Encrypt the audio data
       console.log('Step 3: Encrypting audio data...');
@@ -131,6 +131,8 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
           createTx.pure.string(dialect),
           createTx.pure.string(duration),
           createTx.pure.string(blobId),
+              createTx.pure.vector('u8', encryptionIdBytes),  // ← PASS THE ENCRYPTION ID!
+
           createTx.object('0x6'), // Clock object
         ],
       });

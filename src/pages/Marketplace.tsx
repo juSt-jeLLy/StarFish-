@@ -8,7 +8,7 @@ import spaceBg from "@/assets/space-bg.jpg";
 import { Transaction } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0x97f79c149255c7d67187df7ff2ff0a0e1133315c08ab907aaa87cb61281c7a5d";
+const PACKAGE_ID = "0x0085237749e83235fc57d3bcf85b545eba743a3491b1dc9c3e26b5006edf17f7";
 const SUBSCRIPTION_FEE = 10_000_000; // 0.01 SUI in MIST
 
 interface DatasetData {
