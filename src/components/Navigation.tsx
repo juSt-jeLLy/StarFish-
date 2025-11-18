@@ -1,99 +1,86 @@
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Mic, Database, Home } from "lucide-react";
-import { ConnectModal, useCurrentAccount, useDisconnectWallet } from "@mysten/dapp-kit";
-import { useState } from "react";
+import { Home, Mic, Database, ShoppingBag } from "lucide-react";
+import { ConnectButton } from '@mysten/dapp-kit';
 
 const Navigation = () => {
-  const [connectModalOpen, setConnectModalOpen] = useState(false);
-  const currentAccount = useCurrentAccount();
-  const { mutate: disconnect } = useDisconnectWallet();
-
-  const isConnected = !!currentAccount;
-  const walletAddress = currentAccount?.address;
-
   return (
-    <>
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-sm border-b-4 border-primary">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <Link to="/" className="flex items-center gap-3 group">
-              <div className="w-12 h-12 bg-gradient-to-br from-primary to-secondary p-[2px] animate-pulse-glow">
-                <div className="w-full h-full bg-background flex items-center justify-center">
-                  <Mic className="w-6 h-6 text-primary" />
-                </div>
-              </div>
-              <span className="text-xl font-bold neon-text hidden sm:block">
-                VOICEDATA
-              </span>
+    <nav className="fixed top-0 left-0 right-0 z-30 bg-background/80 backdrop-blur-md border-b-2 border-primary/30">
+      <div className="container mx-auto px-4 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-8">
+            <Link to="/" className="text-2xl font-bold neon-text hover:opacity-80 transition-opacity">
+              STARFISH
             </Link>
-
-            <div className="flex items-center gap-4">
-              <Link to="/" className="hidden md:block">
-                <Button 
-                  variant="ghost" 
-                  className="hover:bg-primary/20 hover:text-primary transition-all"
-                >
-                  <Home className="w-4 h-4 mr-2" />
+            
+            <div className="hidden md:flex gap-4">
+              <Link to="/">
+                <Button variant="ghost" className="text-primary hover:text-primary/80">
+                  <Home className="w-5 h-5 mr-2" />
                   HOME
                 </Button>
               </Link>
               
               <Link to="/record">
-                <Button 
-                  variant="ghost" 
-                  className="hover:bg-primary/20 hover:text-primary transition-all"
-                >
-                  <Mic className="w-4 h-4 mr-2" />
+                <Button variant="ghost" className="text-secondary hover:text-secondary/80">
+                  <Mic className="w-5 h-5 mr-2" />
                   RECORD
                 </Button>
               </Link>
-
+              
               <Link to="/marketplace">
-                <Button 
-                  variant="ghost" 
-                  className="hover:bg-primary/20 hover:text-primary transition-all"
-                >
-                  <Database className="w-4 h-4 mr-2" />
-                  MARKET
+                <Button variant="ghost" className="text-accent hover:text-accent/80">
+                  <Database className="w-5 h-5 mr-2" />
+                  MARKETPLACE
                 </Button>
               </Link>
 
-              {isConnected ? (
-                <>
-                  <div className="text-sm bg-green-500/20 text-green-400 px-3 py-2 rounded border border-green-500/30">
-                    {walletAddress 
-                      ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
-                      : 'Connected'
-                    }
-                  </div>
-                  <Button 
-                    onClick={() => disconnect()}
-                    className="bg-gradient-to-r from-red-500 to-red-600 text-white font-bold px-6 hover:opacity-90 transition-all"
-                  >
-                    DISCONNECT
-                  </Button>
-                </>
-              ) : (
-                <Button 
-                  onClick={() => setConnectModalOpen(true)}
-                  className="bg-gradient-to-r from-primary to-secondary text-background font-bold px-6 hover:opacity-90 transition-all animate-pulse-glow"
-                >
-                  CONNECT WALLET
+              <Link to="/subscriptions">
+                <Button variant="ghost" className="text-accent hover:text-accent/80">
+                  <ShoppingBag className="w-5 h-5 mr-2" />
+                  MY SUBSCRIPTIONS
                 </Button>
-              )}
+              </Link>
             </div>
           </div>
-        </div>
-      </nav>
 
-      {/* Sui Wallet Connect Modal */}
-      <ConnectModal
-        trigger={<div style={{ display: 'none' }} />}
-        open={connectModalOpen}
-        onOpenChange={(isOpen) => setConnectModalOpen(isOpen)}
-      />
-    </>
+          <div className="flex items-center gap-4">
+            <ConnectButton />
+          </div>
+        </div>
+
+        {/* Mobile Navigation */}
+        <div className="md:hidden flex gap-2 mt-4 flex-wrap">
+          <Link to="/" className="flex-1">
+            <Button variant="ghost" size="sm" className="w-full text-primary">
+              <Home className="w-4 h-4 mr-1" />
+              HOME
+            </Button>
+          </Link>
+          
+          <Link to="/record" className="flex-1">
+            <Button variant="ghost" size="sm" className="w-full text-secondary">
+              <Mic className="w-4 h-4 mr-1" />
+              RECORD
+            </Button>
+          </Link>
+          
+          <Link to="/marketplace" className="flex-1">
+            <Button variant="ghost" size="sm" className="w-full text-accent">
+              <Database className="w-4 h-4 mr-1" />
+              MARKET
+            </Button>
+          </Link>
+
+          <Link to="/subscriptions" className="flex-1">
+            <Button variant="ghost" size="sm" className="w-full text-accent">
+              <ShoppingBag className="w-4 h-4 mr-1" />
+              MY SUBS
+            </Button>
+          </Link>
+        </div>
+      </div>
+    </nav>
   );
 };
 

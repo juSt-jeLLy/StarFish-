@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Mic, Square, Languages, Clock, Download } from "lucide-react";
+import { Mic, Square, Languages, Clock, Download, CheckCircle } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import WaveformVisualizer from "@/components/WaveformVisualizer";
+import { WalrusEncryptUpload } from "@/components/WalrusEncryptUpload.tsx";
 import { AudioRecorder, downloadAudio } from "@/utils/audioRecorder";
 import { toast } from "sonner";
 import spaceBg from "@/assets/space-bg.jpg";
@@ -42,27 +43,32 @@ const Record = () => {
   const [audioRecorder, setAudioRecorder] = useState<AudioRecorder | null>(null);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [visualizerData, setVisualizerData] = useState<Uint8Array | null>(null);
+  const [publishedDatasetId, setPublishedDatasetId] = useState<string>("");
 
   const handleLanguageSelect = (language: string) => {
     setSelectedLanguage(language);
     setSelectedDialect("");
     setCurrentText("");
+    setRecordedBlob(null);
+    setPublishedDatasetId("");
   };
 
   const handleDialectSelect = (dialect: string) => {
     setSelectedDialect(dialect);
+    setRecordedBlob(null);
+    setPublishedDatasetId("");
   };
 
   const handleDurationSelect = (duration: string) => {
     setSelectedDuration(duration);
-    // Generate random text
     const randomText = sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
     setCurrentText(randomText);
+    setRecordedBlob(null);
+    setPublishedDatasetId("");
   };
 
   const toggleRecording = async () => {
     if (isRecording && audioRecorder) {
-      // Stop recording
       try {
         setIsRecording(false);
         const blob = await audioRecorder.stop();
@@ -74,7 +80,6 @@ const Record = () => {
         toast.error("Failed to save recording");
       }
     } else {
-      // Start recording
       try {
         const recorder = new AudioRecorder((data) => {
           setVisualizerData(data);
@@ -83,6 +88,7 @@ const Record = () => {
         setAudioRecorder(recorder);
         setIsRecording(true);
         setRecordedBlob(null);
+        setPublishedDatasetId("");
         toast.success("Recording started!");
       } catch (error) {
         console.error("Error starting recording:", error);
@@ -94,10 +100,22 @@ const Record = () => {
   const handleDownload = () => {
     if (recordedBlob) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = `voice-${selectedLanguage}-${selectedDialect}-${timestamp}.mp3`;
+      const filename = `voice-${selectedLanguage}-${selectedDialect}-${timestamp}.webm`;
       downloadAudio(recordedBlob, filename);
       toast.success("Download started!");
     }
+  };
+
+  const handlePublishSuccess = (datasetId: string) => {
+    setPublishedDatasetId(datasetId);
+    toast.success("Dataset published to marketplace!");
+  };
+
+  const handleNewRecording = () => {
+    setSelectedDuration("");
+    setCurrentText("");
+    setRecordedBlob(null);
+    setPublishedDatasetId("");
   };
 
   return (
@@ -202,19 +220,16 @@ const Record = () => {
 
           {/* Recording Interface */}
           {currentText && (
-            <div className="animate-slide-in">
+            <div className="animate-slide-in space-y-6">
               <Button
                 variant="ghost"
-                onClick={() => {
-                  setSelectedDuration("");
-                  setCurrentText("");
-                }}
+                onClick={handleNewRecording}
                 className="mb-4 text-secondary hover:text-secondary/80"
               >
-                ← BACK TO DURATION
+                ← START NEW RECORDING
               </Button>
               
-              <Card className="p-8 neon-border bg-card/80 backdrop-blur mb-8">
+              <Card className="p-8 neon-border bg-card/80 backdrop-blur">
                 <div className="mb-6">
                   <p className="text-sm text-muted-foreground mb-2 text-center">
                     {selectedLanguage} - {selectedDialect} - {selectedDuration}
@@ -227,9 +242,7 @@ const Record = () => {
                   </div>
                 </div>
 
-                <div 
-                  className="h-48 mb-6 relative overflow-hidden neon-border bg-background/50"
-                >
+                <div className="h-48 mb-6 relative overflow-hidden neon-border bg-background/50">
                   <WaveformVisualizer 
                     dataArray={visualizerData} 
                     isRecording={isRecording} 
@@ -240,7 +253,7 @@ const Record = () => {
                   <Button
                     size="lg"
                     onClick={toggleRecording}
-                    disabled={!currentText}
+                    disabled={!currentText || publishedDatasetId !== ""}
                     className={`${
                       isRecording
                         ? "bg-destructive hover:bg-destructive/90"
@@ -260,14 +273,14 @@ const Record = () => {
                     )}
                   </Button>
 
-                  {recordedBlob && !isRecording && (
+                  {recordedBlob && !isRecording && !publishedDatasetId && (
                     <Button
                       size="lg"
                       onClick={handleDownload}
                       className="bg-accent hover:bg-accent/90 text-background font-bold px-12 py-6 text-lg pixel-border"
                     >
                       <Download className="w-6 h-6 mr-2" />
-                      DOWNLOAD MP3
+                      DOWNLOAD AUDIO
                     </Button>
                   )}
                 </div>
@@ -278,12 +291,62 @@ const Record = () => {
                   </p>
                 )}
 
-                {recordedBlob && !isRecording && (
+                {recordedBlob && !isRecording && !publishedDatasetId && (
                   <p className="text-center text-accent font-bold mt-4">
-                    RECORDING COMPLETE! Click download to save your file.
+                    RECORDING COMPLETE! Download or publish to marketplace below.
                   </p>
                 )}
+
+                {publishedDatasetId && (
+                  <div className="text-center mt-4 space-y-4">
+                    <CheckCircle className="w-16 h-16 text-accent mx-auto mb-2" />
+                    <div>
+                      <p className="text-accent font-bold text-xl mb-3">
+                        ✓ PUBLISHED TO MARKETPLACE!
+                      </p>
+                    </div>
+                    
+                    <div className="bg-background/50 border border-accent/30 rounded-lg p-4 space-y-3">
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">Dataset Object ID:</p>
+                        <a
+                          href={`https://testnet.suivision.xyz/object/${publishedDatasetId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent hover:text-accent/80 underline font-mono text-xs break-all inline-block"
+                        >
+                          {publishedDatasetId}
+                        </a>
+                      </div>
+                      
+                      <div className="flex flex-col gap-2 pt-2">
+                        <a
+                          href={`https://testnet.suivision.xyz/object/${publishedDatasetId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent hover:text-accent/80 underline font-bold"
+                        >
+                          → View on Sui Explorer
+                        </a>
+                        <p className="text-xs text-muted-foreground">
+                          Your dataset is now live on the blockchain and available for purchase!
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </Card>
+
+              {/* Upload to Marketplace */}
+              {recordedBlob && !isRecording && !publishedDatasetId && (
+                <WalrusEncryptUpload
+                  audioBlob={recordedBlob}
+                  language={selectedLanguage}
+                  dialect={selectedDialect}
+                  duration={selectedDuration}
+                  onSuccess={handlePublishSuccess}
+                />
+              )}
             </div>
           )}
         </div>
