@@ -22,7 +22,7 @@ type DatasetInfo = {
   txDigest: string;
 };
 
-const PACKAGE_ID = "0x59a6ee02e71ec4dc901f47b795aeea6bc5e0f424d9daeecddf645ef9b063afff";
+const PACKAGE_ID = "0x80040b58a21d64aea09f236e191937cdbcccd8081345fe2fc55bccd36a79abe9";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"

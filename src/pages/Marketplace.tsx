@@ -8,7 +8,7 @@ import spaceBg from "@/assets/space-bg.jpg";
 import { Transaction } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0x59a6ee02e71ec4dc901f47b795aeea6bc5e0f424d9daeecddf645ef9b063afff";
+const PACKAGE_ID = "0x80040b58a21d64aea09f236e191937cdbcccd8081345fe2fc55bccd36a79abe9";
 const SUBSCRIPTION_FEE = 10_000_000; // 0.01 SUI in MIST
 
 interface DatasetData {
@@ -132,44 +132,18 @@ const Marketplace = () => {
     setPurchasing(dataset.id);
 
     try {
-      // Get ALL user's SUI coins
-      const coins = await suiClient.getCoins({
-        owner: currentAccount.address,
-        coinType: '0x2::sui::SUI',
-      });
-
-      if (coins.data.length === 0) {
-        toast.error("No SUI coins found in wallet");
-        setPurchasing(null);
-        return;
-      }
-
-      // Check total balance
-      const totalBalance = coins.data.reduce(
-        (sum, coin) => sum + BigInt(coin.balance),
-        BigInt(0)
-      );
-
-      // Need enough for subscription fee + estimated gas (0.02 SUI total)
-      const requiredBalance = BigInt(SUBSCRIPTION_FEE) + BigInt(10_000_000);
-      
-      if (totalBalance < requiredBalance) {
-        toast.error("Insufficient SUI balance (need at least 0.02 SUI for fee + gas)");
-        setPurchasing(null);
-        return;
-      }
-
       const tx = new Transaction();
       tx.setGasBudget(10000000);
 
-      // Split payment from gas coin (this is the recommended pattern)
+      // Split the subscription fee from the gas coin
+      // This is the recommended pattern - gas coin is automatically available as tx.gas
       const [paymentCoin] = tx.splitCoins(tx.gas, [SUBSCRIPTION_FEE]);
 
-      // Call subscribe_entry
+      // Call subscribe_entry with the split coin
       tx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
         arguments: [
-          paymentCoin,             // Payment coin split from gas
+          paymentCoin,             // Payment coin (split from gas)
           tx.object(dataset.id),   // VoiceDataset object
           tx.object('0x6'),        // Clock object
         ],
@@ -178,7 +152,8 @@ const Marketplace = () => {
       signAndExecute(
         { transaction: tx },
         {
-          onSuccess: () => {
+          onSuccess: (result) => {
+            console.log("Purchase successful:", result.digest);
             toast.success("Purchase successful! Check 'My Subscriptions'");
             loadMarketplace();
           },

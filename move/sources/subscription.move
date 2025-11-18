@@ -2,7 +2,7 @@
 module starfish::voice_marketplace;
 
 use std::string::String;
-use sui::{clock::Clock, coin::Coin, dynamic_field as df, sui::SUI, balance::{Self, Balance}, event};
+use sui::{clock::Clock, coin::Coin, dynamic_field as df, sui::SUI, event};
 
 const EInvalidCap: u64 = 0;
 const EInvalidFee: u64 = 1;
@@ -30,7 +30,6 @@ public struct VoiceDataset has key {
     duration: String,
     blob_id: String,
     created_at: u64,
-    earnings: Balance<SUI>,
 }
 
 /// Subscription to access a voice dataset
@@ -59,6 +58,7 @@ public struct DatasetCreated has copy, drop {
 public struct SubscriptionPurchased has copy, drop {
     dataset_id: ID,
     subscriber: address,
+    creator: address,
     amount: u64,
 }
 
@@ -85,7 +85,6 @@ public fun create_dataset(
         duration,
         blob_id,
         created_at: dataset_timestamp,
-        earnings: balance::zero(),
     };
     
     let dataset_id = object::id(&dataset);
@@ -159,10 +158,10 @@ entry fun publish_entry(
     publish(dataset, cap, blob_id, c, ctx);
 }
 
-/// Purchase subscription to a dataset
+/// Purchase subscription to a dataset - payment goes directly to creator
 public fun subscribe(
     payment: Coin<SUI>,
-    dataset: &mut VoiceDataset,
+    dataset: &VoiceDataset,
     c: &Clock,
     ctx: &mut TxContext,
 ): Subscription {
@@ -170,9 +169,8 @@ public fun subscribe(
     assert!(ctx.sender() != dataset.creator, ECannotBuyOwnDataset);
     assert!(payment.value() == SUBSCRIPTION_FEE, EInvalidFee);
     
-    // Add payment to dataset earnings
-    let payment_balance = payment.into_balance();
-    dataset.earnings.join(payment_balance);
+    // Transfer payment DIRECTLY to the dataset creator
+    transfer::public_transfer(payment, dataset.creator);
     
     let subscription = Subscription {
         id: object::new(ctx),
@@ -184,6 +182,7 @@ public fun subscribe(
     event::emit(SubscriptionPurchased {
         dataset_id: object::id(dataset),
         subscriber: ctx.sender(),
+        creator: dataset.creator,
         amount: SUBSCRIPTION_FEE,
     });
     
@@ -192,33 +191,11 @@ public fun subscribe(
 
 entry fun subscribe_entry(
     payment: Coin<SUI>,
-    dataset: &mut VoiceDataset,
+    dataset: &VoiceDataset,
     c: &Clock,
     ctx: &mut TxContext,
 ) {
     transfer::transfer(subscribe(payment, dataset, c, ctx), ctx.sender());
-}
-
-/// Creator withdraws earnings
-public fun withdraw_earnings(
-    dataset: &mut VoiceDataset,
-    cap: &DatasetCap,
-    ctx: &mut TxContext,
-) {
-    assert!(cap.dataset_id == object::id(dataset), EInvalidCap);
-    let amount = dataset.earnings.value();
-    if (amount > 0) {
-        let withdrawn = dataset.earnings.split(amount);
-        transfer::public_transfer(withdrawn.into_coin(ctx), dataset.creator);
-    };
-}
-
-entry fun withdraw_earnings_entry(
-    dataset: &mut VoiceDataset,
-    cap: &DatasetCap,
-    ctx: &mut TxContext,
-) {
-    withdraw_earnings(dataset, cap, ctx);
 }
 
 //////////////////////////////////////////
@@ -280,14 +257,9 @@ public fun get_dataset_creator(dataset: &VoiceDataset): address {
     dataset.creator
 }
 
-public fun get_dataset_earnings(dataset: &VoiceDataset): u64 {
-    dataset.earnings.value()
-}
-
 #[test_only]
 public fun destroy_for_testing(dataset: VoiceDataset, sub: Subscription, cap: DatasetCap) {
-    let VoiceDataset { id, earnings, .. } = dataset;
-    earnings.destroy_for_testing();
+    let VoiceDataset { id, .. } = dataset;
     object::delete(id);
     let Subscription { id, .. } = sub;
     object::delete(id);
