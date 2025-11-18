@@ -15,7 +15,7 @@ const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
 ];
-const WALRUS_AGGREGATOR_URL = "https://aggregator.walrus-testnet.walrus.space";
+const WALRUS_AGGREGATOR_URL = "https://aggregator.walrus-testnet.walrus.space/v1/blobs/";
 
 interface SubscriptionData {
   id: string;
@@ -53,56 +53,83 @@ const MySubscriptions = () => {
     }
   }, [currentAccount?.address]);
 
-  const loadSubscriptions = async () => {
+const loadSubscriptions = async () => {
     if (!currentAccount?.address) return;
 
     try {
-      // Get all subscription objects owned by user
-      const result = await suiClient.getOwnedObjects({
-        owner: currentAccount.address,
-        options: {
-          showContent: true,
-          showType: true,
-        },
-        filter: {
-          StructType: `${PACKAGE_ID}::voice_marketplace::Subscription`,
-        },
-      });
+        const result = await suiClient.getOwnedObjects({
+            owner: currentAccount.address,
+            options: { showContent: true, showType: true },
+            filter: {
+                StructType: `${PACKAGE_ID}::voice_marketplace::Subscription`,
+            },
+        });
 
-      // Load dataset details for each subscription
-      const subsData: SubscriptionData[] = await Promise.all(
-        result.data.map(async (obj) => {
-          const fields = (obj.data?.content as any)?.fields;
-          if (!fields) return null;
+        const subsData: SubscriptionData[] = await Promise.all(
+            result.data.map(async (obj) => {
+                const fields = (obj.data?.content as any)?.fields;
+                if (!fields) return null;
 
-          // Get dataset details
-          const dataset = await suiClient.getObject({
-            id: fields.dataset_id,
-            options: { showContent: true },
-          });
+                // Get dataset details
+                const dataset = await suiClient.getObject({
+                    id: fields.dataset_id,
+                    options: { 
+                        showContent: true,
+                        showBcs: true,  // Add this
+                    },
+                });
 
-          const datasetFields = (dataset.data?.content as any)?.fields;
-          if (!datasetFields) return null;
+                const datasetFields = (dataset.data?.content as any)?.fields;
+                if (!datasetFields) return null;
 
-          return {
-            id: fields.id.id,
-            datasetId: fields.dataset_id,
-            createdAt: parseInt(fields.created_at),
-            language: datasetFields.language,
-            dialect: datasetFields.dialect,
-            duration: datasetFields.duration,
-            blobId: datasetFields.blob_id,
-          };
-        })
-      );
+                // **NEW: Get the WalrusBlob from dynamic field**
+                let actualBlobId = datasetFields.blob_id; // fallback
+                
+                try {
+                    const dynamicFields = await suiClient.getDynamicFields({
+                        parentId: fields.dataset_id,
+                    });
+                    
+                    // Find the walrus_blob dynamic field
+                    const walrusBlobField = dynamicFields.data.find(
+                        df => df.name.value === 'walrus_blob' || 
+                             df.name.value === Buffer.from('walrus_blob').toString('hex')
+                    );
+                    
+                    if (walrusBlobField) {
+                        const walrusBlob = await suiClient.getObject({
+                            id: walrusBlobField.objectId,
+                            options: { showContent: true },
+                        });
+                        const walrusBlobFields = (walrusBlob.data?.content as any)?.fields;
+                        if (walrusBlobFields?.blob_id) {
+                            actualBlobId = walrusBlobFields.blob_id;
+                            console.log('Using blob_id from dynamic field:', actualBlobId);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Could not fetch dynamic field, using fallback blob_id');
+                }
 
-      setSubscriptions(subsData.filter(Boolean) as SubscriptionData[]);
+                return {
+                    id: fields.id.id,
+                    datasetId: fields.dataset_id,
+                    createdAt: parseInt(fields.created_at),
+                    language: datasetFields.language,
+                    dialect: datasetFields.dialect,
+                    duration: datasetFields.duration,
+                    blobId: actualBlobId,  // Use the correct blob_id
+                };
+            })
+        );
+
+        setSubscriptions(subsData.filter(Boolean) as SubscriptionData[]);
     } catch (error) {
-      console.error("Error loading subscriptions:", error);
+        console.error("Error loading subscriptions:", error);
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  };
+};
 
   const handleDownload = async (sub: SubscriptionData) => {
     if (!currentAccount?.address) return;
@@ -142,7 +169,7 @@ const MySubscriptions = () => {
 
       // Download encrypted data from Walrus
       toast.info("Downloading from Walrus...");
-      const response = await fetch(`${WALRUS_AGGREGATOR_URL}/v1/${sub.blobId}`);
+      const response = await fetch(`${WALRUS_AGGREGATOR_URL}${sub.blobId}`);
       if (!response.ok) throw new Error("Failed to download from Walrus");
       
       const encryptedData = new Uint8Array(await response.arrayBuffer());
