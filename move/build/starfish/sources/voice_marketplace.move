@@ -42,7 +42,7 @@ public struct Subscription has key, store {
 }
 
 /// Admin capability for dataset creator
-public struct DatasetCap has key {
+public struct DatasetCap has key, store {
     id: UID,
     dataset_id: ID,
 }
@@ -102,12 +102,14 @@ public fun create_dataset(
         dataset_id,
     };
     
-    // Transfer the dataset object to the creator.
-    // The WalrusBlob will be attached later via the publish function
+    // Transfer the dataset object to the creator
     transfer::transfer(dataset, creator);
+    
+    // Return the cap (caller must handle transfer)
     cap
 }
 
+// Entry function that handles Cap transfer automatically
 entry fun create_dataset_entry(
     language: String,
     dialect: String,
@@ -115,18 +117,10 @@ entry fun create_dataset_entry(
     blob_id: String,
     c: &Clock,
     ctx: &mut TxContext,
-): ID {
-    // Create the dataset and receive the DatasetCap
+) {
     let cap = create_dataset(language, dialect, duration, blob_id, c, ctx);
-
-    // Extract the dataset id from the cap before transferring the cap to the sender
-    let dataset_id = cap.dataset_id;
-
-    // Transfer the cap back to the sender (as before)
+    // Transfer the Cap to sender
     transfer::transfer(cap, ctx.sender());
-
-    // Return the dataset id so callers and transaction effects can see it directly
-    dataset_id
 }
 
 /// Publish (attach) the Walrus blob to a dataset as a dynamic field
@@ -217,6 +211,14 @@ public fun withdraw_earnings(
         let withdrawn = dataset.earnings.split(amount);
         transfer::public_transfer(withdrawn.into_coin(ctx), dataset.creator);
     };
+}
+
+entry fun withdraw_earnings_entry(
+    dataset: &mut VoiceDataset,
+    cap: &DatasetCap,
+    ctx: &mut TxContext,
+) {
+    withdraw_earnings(dataset, cap, ctx);
 }
 
 //////////////////////////////////////////
