@@ -10,7 +10,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { fromHex, toHex } from '@mysten/sui/utils';
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0x80040b58a21d64aea09f236e191937cdbcccd8081345fe2fc55bccd36a79abe9";
+const PACKAGE_ID = "0x97f79c149255c7d67187df7ff2ff0a0e1133315c08ab907aaa87cb61281c7a5d";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"

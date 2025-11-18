@@ -21,7 +21,7 @@ public struct WalrusBlob has key, store {
     encrypted_at: u64,
 }
 
-/// Voice dataset with metadata
+/// Voice dataset with metadata - MUST BE SHARED for marketplace to work
 public struct VoiceDataset has key {
     id: UID,
     creator: address,
@@ -101,8 +101,9 @@ public fun create_dataset(
         dataset_id,
     };
     
-    // Transfer the dataset object to the creator
-    transfer::transfer(dataset, creator);
+    // CRITICAL: Share the dataset object so anyone can purchase subscriptions
+    // This is the key difference - datasets must be shared objects like Services
+    transfer::share_object(dataset);
     
     // Return the cap (caller must handle transfer)
     cap
@@ -158,7 +159,7 @@ entry fun publish_entry(
     publish(dataset, cap, blob_id, c, ctx);
 }
 
-/// Purchase subscription to a dataset - payment goes directly to creator
+/// Purchase subscription to a dataset
 public fun subscribe(
     payment: Coin<SUI>,
     dataset: &VoiceDataset,
