@@ -9,7 +9,7 @@ import { Transaction } from "@mysten/sui/transactions";
 import { coinWithBalance } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0xb39bacd6af7db0417da87846d032573a315ac309e32aca72c743e2e2444e80d7";
+const PACKAGE_ID = "0xb486f1a7bcca26a704f93e07439ea61d7f04f5855eaea850e40b5371d0b1a6b5";
 const SUBSCRIPTION_FEE = 10_000_000; // 0.01 SUI in MIST
 
 interface DatasetData {
@@ -116,59 +116,60 @@ const Marketplace = () => {
     }
   };
 
-  const handlePurchase = async (dataset: DatasetData) => {
-    if (!currentAccount?.address) {
-      toast.error("Please connect your wallet");
-      return;
-    }
+const handlePurchase = async (dataset: DatasetData) => {
+  if (!currentAccount?.address) {
+    toast.error("Please connect your wallet");
+    return;
+  }
 
-    if (dataset.creator === currentAccount.address) {
-      toast.error("You cannot purchase your own dataset");
-      return;
-    }
+  if (dataset.creator === currentAccount.address) {
+    toast.error("You cannot purchase your own dataset");
+    return;
+  }
 
-    if (mySubscriptions.has(dataset.id)) {
-      toast.info("You already own this dataset");
-      return;
-    }
+  if (mySubscriptions.has(dataset.id)) {
+    toast.info("You already own this dataset");
+    return;
+  }
 
-    setPurchasing(dataset.id);
+  setPurchasing(dataset.id);
 
-    try {
-      const tx = new Transaction();
-      tx.setGasBudget(10000000);
+  try {
+    const tx = new Transaction();
+    tx.setGasBudget(10000000);
 
-      const coin = coinWithBalance({ balance: BigInt(SUBSCRIPTION_FEE) });
-      
-      tx.moveCall({
-        target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
-        arguments: [
-          coin,
-          tx.object(dataset.id),
-          tx.object('0x6'), // Clock object
-        ],
-      });
+    // OPTION 1: Use splitCoins to create the payment coin from gas
+    const [coin] = tx.splitCoins(tx.gas, [SUBSCRIPTION_FEE]);
+    
+    tx.moveCall({
+      target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
+      arguments: [
+        coin, // Use the split coin instead of coinWithBalance
+        tx.object(dataset.id),
+        tx.object('0x6'), // Clock object
+      ],
+    });
 
-      signAndExecute(
-        { transaction: tx },
-        {
-          onSuccess: () => {
-            toast.success("Purchase successful! Check 'My Subscriptions'");
-            loadMarketplace();
-          },
-          onError: (error) => {
-            console.error("Purchase error:", error);
-            toast.error("Purchase failed");
-          },
-        }
-      );
-    } catch (error) {
-      console.error("Purchase error:", error);
-      toast.error(`Purchase failed: ${error.message}`);
-    } finally {
-      setPurchasing(null);
-    }
-  };
+    signAndExecute(
+      { transaction: tx },
+      {
+        onSuccess: () => {
+          toast.success("Purchase successful! Check 'My Subscriptions'");
+          loadMarketplace();
+        },
+        onError: (error) => {
+          console.error("Purchase error:", error);
+          toast.error("Purchase failed");
+        },
+      }
+    );
+  } catch (error: any) {
+    console.error("Purchase error:", error);
+    toast.error(`Purchase failed: ${error?.message || 'Unknown error'}`);
+  } finally {
+    setPurchasing(null);
+  }
+};
 
   const filteredDatasets = selectedLanguage
     ? datasets.filter(d => d.language === selectedLanguage)

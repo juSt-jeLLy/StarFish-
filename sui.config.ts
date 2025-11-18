@@ -3,7 +3,7 @@
 
 export const SUI_CONFIG = {
   // Replace this with your deployed package ID
-  PACKAGE_ID: "0xb39bacd6af7db0417da87846d032573a315ac309e32aca72c743e2e2444e80d7",
+  PACKAGE_ID: "0xb486f1a7bcca26a704f93e07439ea61d7f04f5855eaea850e40b5371d0b1a6b5",
   
   // Network configuration
   NETWORK: "testnet" as const,
@@ -42,7 +42,7 @@ export function formatSUI(mist: number | bigint): string {
 
 // Helper function to validate package ID
 export function validatePackageId(): boolean {
-  if (SUI_CONFIG.PACKAGE_ID === "0xb39bacd6af7db0417da87846d032573a315ac309e32aca72c743e2e2444e80d7") {
+  if (SUI_CONFIG.PACKAGE_ID === "0xb486f1a7bcca26a704f93e07439ea61d7f04f5855eaea850e40b5371d0b1a6b5") {
     console.error(
       "⚠️  PACKAGE_ID not configured! Please deploy the Move contract and update sui.config.ts"
     );
