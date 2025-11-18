@@ -9,7 +9,8 @@ const EInvalidFee: u64 = 1;
 const ENoAccess: u64 = 2;
 const ECannotBuyOwnDataset: u64 = 3;
 const MARKER: u64 = 4;
-
+// Add this near the other constants (around line 12)
+const SUBSCRIPTION_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
 // Fixed subscription fee: 0.01 SUI = 10_000_000 MIST
 const SUBSCRIPTION_FEE: u64 = 10_000_000;
 
@@ -29,7 +30,7 @@ public struct VoiceDataset has key {
     dialect: String,
     duration: String,
     blob_id: String,
-    encryption_id: vector<u8>,  // ← ADD THIS!
+    encryption_id: vector<u8>,
     created_at: u64,
 }
 
@@ -72,7 +73,7 @@ public fun create_dataset(
     dialect: String,
     duration: String,
     blob_id: String,
-    encryption_id: vector<u8>,  // ← ADD THIS PARAMETER
+    encryption_id: vector<u8>,
     c: &Clock,
     ctx: &mut TxContext,
 ): DatasetCap {
@@ -86,7 +87,7 @@ public fun create_dataset(
         dialect,
         duration,
         blob_id,
-        encryption_id,  // ← STORE IT!
+        encryption_id,
         created_at: dataset_timestamp,
     };
     
@@ -105,7 +106,6 @@ public fun create_dataset(
     };
     
     // CRITICAL: Share the dataset object so anyone can purchase subscriptions
-    // This is the key difference - datasets must be shared objects like Services
     transfer::share_object(dataset);
     
     // Return the cap (caller must handle transfer)
@@ -118,8 +118,7 @@ entry fun create_dataset_entry(
     dialect: String,
     duration: String,
     blob_id: String,
-        encryption_id: vector<u8>,  // ← ADD THIS PARAMETER
-
+    encryption_id: vector<u8>,
     c: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -129,7 +128,6 @@ entry fun create_dataset_entry(
 }
 
 /// Publish (attach) the Walrus blob to a dataset as a dynamic field
-/// This must be called after creating the dataset to link the encrypted blob to the Sui object
 public fun publish(
     dataset: &mut VoiceDataset,
     cap: &DatasetCap,
@@ -149,7 +147,6 @@ public fun publish(
     };
     
     // Attach the WalrusBlob as a dynamic field of the dataset
-    // This makes it appear as a connected NFT in Suiscan
     df::add(&mut dataset.id, b"walrus_blob", walrus_blob);
 }
 
@@ -205,36 +202,37 @@ entry fun subscribe_entry(
 }
 
 //////////////////////////////////////////
-// Access Control (for Seal integration)
+// Access Control (for Seal integration) - FIXED!
 
 /// Check if user has access to decrypt the dataset
 fun approve_internal(
-    caller: address,
     id: vector<u8>,
     dataset: &VoiceDataset,
     sub: &Subscription,
+    c: &Clock,
 ): bool {
     // Check if subscription matches dataset
     if (object::id(dataset) != sub.dataset_id) {
         return false
     };
     
-    // Check if caller is the subscriber
-    if (caller != sub.subscriber) {
+    // ADD THIS TTL CHECK - Prevent expired subscriptions from accessing
+    if (c.timestamp_ms() > sub.created_at + SUBSCRIPTION_TTL_MS) {
         return false
     };
     
-    // Check if id has the right prefix (dataset ID)
-    is_prefix(dataset.id.to_bytes(), id)
+    // FIXED: Check if the provided ID matches the stored encryption_id
+    // This ensures the encryption ID used during upload matches during download
+    is_prefix(dataset.encryption_id, id)
 }
 
 entry fun seal_approve(
     id: vector<u8>,
     sub: &Subscription,
     dataset: &VoiceDataset,
-    ctx: &TxContext,
+    c: &Clock,
 ) {
-    assert!(approve_internal(ctx.sender(), id, dataset, sub), ENoAccess);
+    assert!(approve_internal(id, dataset, sub, c), ENoAccess);
 }
 
 /// Returns true if `prefix` is a prefix of `word`
