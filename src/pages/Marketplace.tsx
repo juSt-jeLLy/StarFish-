@@ -8,7 +8,7 @@ import spaceBg from "@/assets/space-bg.jpg";
 import { Transaction } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0xb486f1a7bcca26a704f93e07439ea61d7f04f5855eaea850e40b5371d0b1a6b5";
+const PACKAGE_ID = "0x59a6ee02e71ec4dc901f47b795aeea6bc5e0f424d9daeecddf645ef9b063afff";
 const SUBSCRIPTION_FEE = 10_000_000; // 0.01 SUI in MIST
 
 interface DatasetData {
@@ -19,7 +19,6 @@ interface DatasetData {
   duration: string;
   blobId: string;
   createdAt: number;
-  earnings: number;
 }
 
 const Marketplace = () => {
@@ -70,7 +69,6 @@ const Marketplace = () => {
               duration: fields.duration,
               blobId: fields.blob_id,
               createdAt: parseInt(fields.created_at),
-              earnings: parseInt(fields.earnings) || 0,
             };
           } catch (err) {
             console.error("Error loading dataset:", datasetId, err);
@@ -134,7 +132,7 @@ const Marketplace = () => {
     setPurchasing(dataset.id);
 
     try {
-      // Get user's SUI coins
+      // Get ALL user's SUI coins
       const coins = await suiClient.getCoins({
         owner: currentAccount.address,
         coinType: '0x2::sui::SUI',
@@ -146,13 +144,17 @@ const Marketplace = () => {
         return;
       }
 
-      // Find a coin with enough balance
-      const suitableCoin = coins.data.find(
-        coin => BigInt(coin.balance) >= BigInt(SUBSCRIPTION_FEE)
+      // Check total balance
+      const totalBalance = coins.data.reduce(
+        (sum, coin) => sum + BigInt(coin.balance),
+        BigInt(0)
       );
 
-      if (!suitableCoin) {
-        toast.error("Insufficient SUI balance (need 0.01 SUI)");
+      // Need enough for subscription fee + estimated gas (0.02 SUI total)
+      const requiredBalance = BigInt(SUBSCRIPTION_FEE) + BigInt(10_000_000);
+      
+      if (totalBalance < requiredBalance) {
+        toast.error("Insufficient SUI balance (need at least 0.02 SUI for fee + gas)");
         setPurchasing(null);
         return;
       }
@@ -160,17 +162,14 @@ const Marketplace = () => {
       const tx = new Transaction();
       tx.setGasBudget(10000000);
 
-      // Split the exact amount from a suitable coin
-      const [paymentCoin] = tx.splitCoins(
-        tx.object(suitableCoin.coinObjectId),
-        [SUBSCRIPTION_FEE]
-      );
-      
-      // Call subscribe_entry which will transfer the subscription to sender
+      // Split payment from gas coin (this is the recommended pattern)
+      const [paymentCoin] = tx.splitCoins(tx.gas, [SUBSCRIPTION_FEE]);
+
+      // Call subscribe_entry
       tx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
         arguments: [
-          paymentCoin,             // Payment coin (split from user's SUI coin)
+          paymentCoin,             // Payment coin split from gas
           tx.object(dataset.id),   // VoiceDataset object
           tx.object('0x6'),        // Clock object
         ],
@@ -293,11 +292,6 @@ const Marketplace = () => {
                           <div className="space-y-1 text-sm text-muted-foreground">
                             <p>Duration: {dataset.duration}</p>
                             <p>Created: {new Date(dataset.createdAt).toLocaleDateString()}</p>
-                            {myDatasets.has(dataset.id) && (
-                              <p className="text-accent font-bold">
-                                Earnings: {(dataset.earnings / 1_000_000_000).toFixed(2)} SUI
-                              </p>
-                            )}
                           </div>
                         </div>
                         <Languages className="w-8 h-8 text-secondary" />

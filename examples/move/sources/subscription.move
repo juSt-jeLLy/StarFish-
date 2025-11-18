@@ -2,16 +2,23 @@
 module starfish::voice_marketplace;
 
 use std::string::String;
-use sui::{clock::Clock, coin::Coin, dynamic_field as df, sui::SUI, balance::{Self, Balance}, event};
+use sui::{clock::Clock, coin::Coin, dynamic_field as df, sui::SUI, event};
 
 const EInvalidCap: u64 = 0;
-const EInvalidFee: u64 = 1;
 const ENoAccess: u64 = 2;
 const ECannotBuyOwnDataset: u64 = 3;
 const MARKER: u64 = 4;
 
 // Fixed subscription fee: 0.01 SUI = 10_000_000 MIST
 const SUBSCRIPTION_FEE: u64 = 10_000_000;
+
+/// Walrus blob object to represent encrypted voice data stored on Walrus
+public struct WalrusBlob has key, store {
+    id: UID,
+    blob_id: String,
+    dataset_id: ID,
+    encrypted_at: u64,
+}
 
 /// Voice dataset with metadata
 public struct VoiceDataset has key {
@@ -22,7 +29,6 @@ public struct VoiceDataset has key {
     duration: String,
     blob_id: String,
     created_at: u64,
-    earnings: Balance<SUI>,
 }
 
 /// Subscription to access a voice dataset
@@ -34,7 +40,7 @@ public struct Subscription has key, store {
 }
 
 /// Admin capability for dataset creator
-public struct DatasetCap has key {
+public struct DatasetCap has key, store {
     id: UID,
     dataset_id: ID,
 }
@@ -66,22 +72,24 @@ public fun create_dataset(
     c: &Clock,
     ctx: &mut TxContext,
 ): DatasetCap {
+    let dataset_timestamp = c.timestamp_ms();
+    let creator = ctx.sender();
+    
     let dataset = VoiceDataset {
         id: object::new(ctx),
-        creator: ctx.sender(),
+        creator,
         language,
         dialect,
         duration,
         blob_id,
-        created_at: c.timestamp_ms(),
-        earnings: balance::zero(),
+        created_at: dataset_timestamp,
     };
     
     let dataset_id = object::id(&dataset);
     
     event::emit(DatasetCreated {
         dataset_id,
-        creator: ctx.sender(),
+        creator,
         language: dataset.language,
         dialect: dataset.dialect,
     });
@@ -91,10 +99,14 @@ public fun create_dataset(
         dataset_id,
     };
     
-    transfer::share_object(dataset);
+    // Transfer the dataset object to the creator
+    transfer::transfer(dataset, creator);
+    
+    // Return the cap (caller must handle transfer)
     cap
 }
 
+// Entry function that handles Cap transfer automatically
 entry fun create_dataset_entry(
     language: String,
     dialect: String,
@@ -103,13 +115,52 @@ entry fun create_dataset_entry(
     c: &Clock,
     ctx: &mut TxContext,
 ) {
-    transfer::transfer(create_dataset(language, dialect, duration, blob_id, c, ctx), ctx.sender());
+    let cap = create_dataset(language, dialect, duration, blob_id, c, ctx);
+    // Transfer the Cap to sender
+    transfer::transfer(cap, ctx.sender());
+}
+
+/// Publish (attach) the Walrus blob to a dataset as a dynamic field
+/// This must be called after creating the dataset to link the encrypted blob to the Sui object
+public fun publish(
+    dataset: &mut VoiceDataset,
+    cap: &DatasetCap,
+    blob_id: String,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    // Verify that the cap matches this dataset
+    assert!(cap.dataset_id == object::id(dataset), EInvalidCap);
+    
+    // Create a WalrusBlob object representing the encrypted blob on Walrus
+    let walrus_blob = WalrusBlob {
+        id: object::new(ctx),
+        blob_id,
+        dataset_id: object::id(dataset),
+        encrypted_at: c.timestamp_ms(),
+    };
+    
+    // Attach the WalrusBlob as a dynamic field of the dataset
+    // This makes it appear as a connected NFT in Suiscan
+    df::add(&mut dataset.id, b"walrus_blob", walrus_blob);
+}
+
+/// Entry point for publishing a blob to a dataset
+entry fun publish_entry(
+    dataset: &mut VoiceDataset,
+    cap: &DatasetCap,
+    blob_id: String,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    publish(dataset, cap, blob_id, c, ctx);
 }
 
 /// Purchase subscription to a dataset
+/// Payment is transferred directly to dataset creator
 public fun subscribe(
     payment: Coin<SUI>,
-    dataset: &mut VoiceDataset,
+    dataset: &VoiceDataset,
     c: &Clock,
     ctx: &mut TxContext,
 ): Subscription {
@@ -117,9 +168,8 @@ public fun subscribe(
     assert!(ctx.sender() != dataset.creator, ECannotBuyOwnDataset);
     assert!(payment.value() == SUBSCRIPTION_FEE, EInvalidFee);
     
-    // Add payment to dataset earnings
-    let payment_balance = payment.into_balance();
-    dataset.earnings.join(payment_balance);
+    // Transfer payment directly to dataset creator
+    transfer::public_transfer(payment, dataset.creator);
     
     let subscription = Subscription {
         id: object::new(ctx),
@@ -139,25 +189,11 @@ public fun subscribe(
 
 entry fun subscribe_entry(
     payment: Coin<SUI>,
-    dataset: &mut VoiceDataset,
+    dataset: &VoiceDataset,
     c: &Clock,
     ctx: &mut TxContext,
 ) {
     transfer::transfer(subscribe(payment, dataset, c, ctx), ctx.sender());
-}
-
-/// Creator withdraws earnings
-public fun withdraw_earnings(
-    dataset: &mut VoiceDataset,
-    cap: &DatasetCap,
-    ctx: &mut TxContext,
-) {
-    assert!(cap.dataset_id == object::id(dataset), EInvalidCap);
-    let amount = dataset.earnings.value();
-    if (amount > 0) {
-        let withdrawn = dataset.earnings.split(amount);
-        transfer::public_transfer(withdrawn.into_coin(ctx), dataset.creator);
-    };
 }
 
 //////////////////////////////////////////
@@ -219,14 +255,9 @@ public fun get_dataset_creator(dataset: &VoiceDataset): address {
     dataset.creator
 }
 
-public fun get_dataset_earnings(dataset: &VoiceDataset): u64 {
-    dataset.earnings.value()
-}
-
 #[test_only]
 public fun destroy_for_testing(dataset: VoiceDataset, sub: Subscription, cap: DatasetCap) {
-    let VoiceDataset { id, earnings, .. } = dataset;
-    earnings.destroy_for_testing();
+    let VoiceDataset { id, .. } = dataset;
     object::delete(id);
     let Subscription { id, .. } = sub;
     object::delete(id);
