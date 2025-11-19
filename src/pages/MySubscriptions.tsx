@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useCurrentAccount, useSuiClient, useSignPersonalMessage } from "@mysten/dapp-kit";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, Download, Loader2 } from "lucide-react";
+import { Database, Download, Loader2, Clock, AlertCircle } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import spaceBg from "@/assets/space-bg.jpg";
 import { SealClient, SessionKey } from '@mysten/seal';
@@ -10,7 +10,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { fromHex, toHex } from '@mysten/sui/utils';
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0xbab968bc9afe161a564f9d765b9d24e18d80f6b02406061cca8003643bfb8100";
+const PACKAGE_ID = "0x12ec468fafe7aaf490550244e73f3565bf8d90fe1370223c267d4cd89b368040";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
@@ -21,11 +21,15 @@ interface SubscriptionData {
   id: string;
   datasetId: string;
   createdAt: number;
+  expiresAt: number;
+  daysPurchased: number;
   language: string;
   dialect: string;
   duration: string;
   blobId: string;
   encryptionId: string;
+  isExpired: boolean;
+  timeRemaining: string;
 }
 
 const MySubscriptions = () => {
@@ -46,10 +50,25 @@ const MySubscriptions = () => {
     verifyKeyServers: false,
   });
 
+  const getTimeRemaining = (expiresAt: number): string => {
+    const now = Date.now();
+    const diff = expiresAt - now;
+    
+    if (diff <= 0) return "Expired";
+    
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (days > 0) return `${days}d ${hours}h remaining`;
+    if (hours > 0) return `${hours}h ${minutes}m remaining`;
+    return `${minutes}m remaining`;
+  };
+
   useEffect(() => {
     if (currentAccount?.address) {
       loadSubscriptions();
-      const interval = setInterval(loadSubscriptions, 30000); // Reduced to 30 seconds
+      const interval = setInterval(loadSubscriptions, 30000);
       return () => clearInterval(interval);
     }
   }, [currentAccount?.address]);
@@ -71,7 +90,6 @@ const MySubscriptions = () => {
           const fields = (obj.data?.content as any)?.fields;
           if (!fields) return null;
 
-          // Get dataset details
           const dataset = await suiClient.getObject({
             id: fields.dataset_id,
             options: { 
@@ -83,35 +101,49 @@ const MySubscriptions = () => {
           const datasetFields = (dataset.data?.content as any)?.fields;
           if (!datasetFields) return null;
 
-          // Get the encryption_id from the dataset
           let encryptionId = "";
           if (datasetFields.encryption_id) {
             const encryptionIdBytes = datasetFields.encryption_id;
             encryptionId = toHex(new Uint8Array(encryptionIdBytes));
-            console.log('✓ Found encryption_id:', encryptionId);
           } else {
-            console.warn('No encryption_id found in dataset');
             return null;
           }
 
-          // Use the blob_id directly from dataset (NO DYNAMIC FIELD LOOKUP)
           const blobId = datasetFields.blob_id;
-          console.log('Using blob_id from dataset:', blobId);
+          const expiresAt = parseInt(fields.expires_at);
+          const isExpired = Date.now() > expiresAt;
+          
+          // Reconstruct duration string
+          const durationSeconds = parseInt(datasetFields.duration_seconds);
+          let durationStr = "30 seconds";
+          if (durationSeconds === 60) durationStr = "1 minute";
+          else if (durationSeconds === 120) durationStr = "2 minutes";
+          else if (durationSeconds === 300) durationStr = "5 minutes";
 
           return {
             id: fields.id.id,
             datasetId: fields.dataset_id,
             createdAt: parseInt(fields.created_at),
+            expiresAt,
+            daysPurchased: parseInt(fields.days_purchased),
             language: datasetFields.language,
             dialect: datasetFields.dialect,
-            duration: datasetFields.duration,
-            blobId: blobId,
-            encryptionId: encryptionId,
+            duration: durationStr,
+            blobId,
+            encryptionId,
+            isExpired,
+            timeRemaining: getTimeRemaining(expiresAt),
           };
         })
       );
 
-      setSubscriptions(subsData.filter(Boolean) as SubscriptionData[]);
+      const validSubs = subsData.filter(Boolean) as SubscriptionData[];
+      // Sort: active first, then by expiry date
+      validSubs.sort((a, b) => {
+        if (a.isExpired !== b.isExpired) return a.isExpired ? 1 : -1;
+        return a.expiresAt - b.expiresAt;
+      });
+      setSubscriptions(validSubs);
     } catch (error) {
       console.error("Error loading subscriptions:", error);
     } finally {
@@ -122,10 +154,14 @@ const MySubscriptions = () => {
   const handleDownload = async (sub: SubscriptionData) => {
     if (!currentAccount?.address) return;
 
+    if (sub.isExpired) {
+      toast.error("This subscription has expired. Please renew to download.");
+      return;
+    }
+
     setDownloading(sub.id);
 
     try {
-      // Create or use existing session key
       let currentSessionKey = sessionKey;
       
       if (!currentSessionKey || currentSessionKey.isExpired() || 
@@ -155,17 +191,14 @@ const MySubscriptions = () => {
 
       if (!currentSessionKey) throw new Error("Failed to create session key");
 
-      // Download encrypted data from Walrus
       toast.info("Downloading from Walrus...");
       const response = await fetch(`${WALRUS_AGGREGATOR_URL}${sub.blobId}`);
       if (!response.ok) throw new Error("Failed to download from Walrus");
       
       const encryptedData = new Uint8Array(await response.arrayBuffer());
 
-      // Use the stored encryption ID
       const idBytes = fromHex(sub.encryptionId);
       
-      // Build transaction
       const tx = new Transaction();
       tx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::seal_approve`,
@@ -190,7 +223,6 @@ const MySubscriptions = () => {
         threshold: 2,
       });
 
-      // Decrypt the data
       toast.info("Decrypting audio...");
       const decryptedData = await client.decrypt({
         data: encryptedData,
@@ -198,7 +230,6 @@ const MySubscriptions = () => {
         txBytes,
       });
 
-      // Download the file
       const decryptedBuffer = new Uint8Array(decryptedData);
       const blob = new Blob([decryptedBuffer], { type: 'audio/webm' });
       const url = URL.createObjectURL(blob);
@@ -219,7 +250,6 @@ const MySubscriptions = () => {
     }
   };
 
-  // Add a manual refresh button
   const handleRefresh = () => {
     setLoading(true);
     loadSubscriptions();
@@ -279,8 +309,17 @@ const MySubscriptions = () => {
               {subscriptions.map((sub) => (
                 <Card
                   key={sub.id}
-                  className="p-6 neon-border bg-card/80 backdrop-blur hover-lift"
+                  className={`p-6 neon-border bg-card/80 backdrop-blur hover-lift ${
+                    sub.isExpired ? 'opacity-60' : ''
+                  }`}
                 >
+                  {sub.isExpired && (
+                    <div className="mb-4 p-2 bg-destructive/20 border border-destructive rounded flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-destructive" />
+                      <span className="text-xs text-destructive font-bold">EXPIRED</span>
+                    </div>
+                  )}
+                  
                   <div className="mb-4">
                     <h3 className="text-xl font-bold text-primary mb-2">
                       {sub.language} - {sub.dialect}
@@ -288,20 +327,35 @@ const MySubscriptions = () => {
                     <div className="space-y-1 text-sm text-muted-foreground">
                       <p>Duration: {sub.duration}</p>
                       <p>Purchased: {new Date(sub.createdAt).toLocaleDateString()}</p>
-                      <p className="text-xs break-all">Encryption ID: {sub.encryptionId.slice(0, 16)}...</p>
+                      <p>For: {sub.daysPurchased} day{sub.daysPurchased !== 1 ? 's' : ''}</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Clock className="w-4 h-4" />
+                        <span className={`font-bold ${
+                          sub.isExpired ? 'text-destructive' : 'text-accent'
+                        }`}>
+                          {sub.timeRemaining}
+                        </span>
+                      </div>
+                      <p className="text-xs break-all">ID: {sub.encryptionId.slice(0, 16)}...</p>
                     </div>
                   </div>
 
                   <Button
                     onClick={() => handleDownload(sub)}
-                    disabled={downloading === sub.id}
-                    className="w-full bg-gradient-to-r from-primary to-secondary text-background font-bold pixel-border"
+                    disabled={downloading === sub.id || sub.isExpired}
+                    className={`w-full font-bold pixel-border ${
+                      sub.isExpired 
+                        ? 'bg-gray-500 opacity-50 cursor-not-allowed' 
+                        : 'bg-gradient-to-r from-primary to-secondary text-background'
+                    }`}
                   >
                     {downloading === sub.id ? (
                       <>
                         <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                         DOWNLOADING...
                       </>
+                    ) : sub.isExpired ? (
+                      'EXPIRED - RENEW TO ACCESS'
                     ) : (
                       <>
                         <Download className="w-5 h-5 mr-2" />

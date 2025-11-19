@@ -1,4 +1,4 @@
-// Voice Data Marketplace with Subscription Model
+// Voice Data Marketplace with Dynamic Pricing
 module starfish::voice_marketplace;
 
 use std::string::String;
@@ -9,10 +9,10 @@ const EInvalidFee: u64 = 1;
 const ENoAccess: u64 = 2;
 const ECannotBuyOwnDataset: u64 = 3;
 const MARKER: u64 = 4;
-// Add this near the other constants (around line 12)
-const SUBSCRIPTION_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
-// Fixed subscription fee: 0.01 SUI = 10_000_000 MIST
-const SUBSCRIPTION_FEE: u64 = 10_000_000;
+
+// Base price: 0.001 SUI per day for 30 seconds = 1_000_000 MIST
+const BASE_PRICE_PER_DAY: u64 = 1_000_000;
+const MS_PER_DAY: u64 = 24 * 60 * 60 * 1000;
 
 /// Walrus blob object to represent encrypted voice data stored on Walrus
 public struct WalrusBlob has key, store {
@@ -28,7 +28,7 @@ public struct VoiceDataset has key {
     creator: address,
     language: String,
     dialect: String,
-    duration: String,
+    duration_seconds: u64, // Store actual duration in seconds
     blob_id: String,
     encryption_id: vector<u8>,
     created_at: u64,
@@ -40,6 +40,8 @@ public struct Subscription has key, store {
     dataset_id: ID,
     subscriber: address,
     created_at: u64,
+    expires_at: u64, // When the subscription expires
+    days_purchased: u64, // How many days were purchased
 }
 
 /// Admin capability for dataset creator
@@ -54,6 +56,7 @@ public struct DatasetCreated has copy, drop {
     creator: address,
     language: String,
     dialect: String,
+    duration_seconds: u64,
 }
 
 /// Event emitted when subscription is purchased
@@ -62,6 +65,34 @@ public struct SubscriptionPurchased has copy, drop {
     subscriber: address,
     creator: address,
     amount: u64,
+    days_purchased: u64,
+    expires_at: u64,
+}
+
+//////////////////////////////////////////
+// Pricing Logic
+
+/// Calculate price based on duration and days
+/// Formula: (duration_seconds / 30) * BASE_PRICE_PER_DAY * days
+public fun calculate_price(duration_seconds: u64, days: u64): u64 {
+    let duration_multiplier = duration_seconds / 30; // 30 sec = 1x, 60 sec = 2x, etc.
+    BASE_PRICE_PER_DAY * duration_multiplier * days
+}
+
+/// Helper to parse duration string to seconds
+public fun parse_duration_to_seconds(duration: &String): u64 {
+    // Expected formats: "30 seconds", "1 minute", "2 minutes", "5 minutes"
+    if (duration == &std::string::utf8(b"30 seconds")) {
+        30
+    } else if (duration == &std::string::utf8(b"1 minute")) {
+        60
+    } else if (duration == &std::string::utf8(b"2 minutes")) {
+        120
+    } else if (duration == &std::string::utf8(b"5 minutes")) {
+        300
+    } else {
+        30 // Default to 30 seconds
+    }
 }
 
 //////////////////////////////////////////
@@ -79,13 +110,14 @@ public fun create_dataset(
 ): DatasetCap {
     let dataset_timestamp = c.timestamp_ms();
     let creator = ctx.sender();
+    let duration_seconds = parse_duration_to_seconds(&duration);
     
     let dataset = VoiceDataset {
         id: object::new(ctx),
         creator,
         language,
         dialect,
-        duration,
+        duration_seconds,
         blob_id,
         encryption_id,
         created_at: dataset_timestamp,
@@ -98,6 +130,7 @@ public fun create_dataset(
         creator,
         language: dataset.language,
         dialect: dataset.dialect,
+        duration_seconds,
     });
     
     let cap = DatasetCap {
@@ -105,14 +138,10 @@ public fun create_dataset(
         dataset_id,
     };
     
-    // CRITICAL: Share the dataset object so anyone can purchase subscriptions
     transfer::share_object(dataset);
-    
-    // Return the cap (caller must handle transfer)
     cap
 }
 
-// Entry function that handles Cap transfer automatically
 entry fun create_dataset_entry(
     language: String,
     dialect: String,
@@ -123,7 +152,6 @@ entry fun create_dataset_entry(
     ctx: &mut TxContext,
 ) {
     let cap = create_dataset(language, dialect, duration, blob_id, encryption_id, c, ctx);
-    // Transfer the Cap to sender
     transfer::transfer(cap, ctx.sender());
 }
 
@@ -135,10 +163,8 @@ public fun publish(
     c: &Clock,
     ctx: &mut TxContext,
 ) {
-    // Verify that the cap matches this dataset
     assert!(cap.dataset_id == object::id(dataset), EInvalidCap);
     
-    // Create a WalrusBlob object representing the encrypted blob on Walrus
     let walrus_blob = WalrusBlob {
         id: object::new(ctx),
         blob_id,
@@ -146,11 +172,9 @@ public fun publish(
         encrypted_at: c.timestamp_ms(),
     };
     
-    // Attach the WalrusBlob as a dynamic field of the dataset
     df::add(&mut dataset.id, b"walrus_blob", walrus_blob);
 }
 
-/// Entry point for publishing a blob to a dataset
 entry fun publish_entry(
     dataset: &mut VoiceDataset,
     cap: &DatasetCap,
@@ -161,32 +185,40 @@ entry fun publish_entry(
     publish(dataset, cap, blob_id, c, ctx);
 }
 
-/// Purchase subscription to a dataset
+/// Purchase subscription to a dataset for specified number of days
 public fun subscribe(
     payment: Coin<SUI>,
     dataset: &VoiceDataset,
+    days: u64,
     c: &Clock,
     ctx: &mut TxContext,
 ): Subscription {
-    // Prevent creator from buying their own dataset
     assert!(ctx.sender() != dataset.creator, ECannotBuyOwnDataset);
-    assert!(payment.value() == SUBSCRIPTION_FEE, EInvalidFee);
     
-    // Transfer payment DIRECTLY to the dataset creator
+    let expected_fee = calculate_price(dataset.duration_seconds, days);
+    assert!(payment.value() == expected_fee, EInvalidFee);
+    
     transfer::public_transfer(payment, dataset.creator);
+    
+    let current_time = c.timestamp_ms();
+    let expires_at = current_time + (days * MS_PER_DAY);
     
     let subscription = Subscription {
         id: object::new(ctx),
         dataset_id: object::id(dataset),
         subscriber: ctx.sender(),
-        created_at: c.timestamp_ms(),
+        created_at: current_time,
+        expires_at,
+        days_purchased: days,
     };
     
     event::emit(SubscriptionPurchased {
         dataset_id: object::id(dataset),
         subscriber: ctx.sender(),
         creator: dataset.creator,
-        amount: SUBSCRIPTION_FEE,
+        amount: expected_fee,
+        days_purchased: days,
+        expires_at,
     });
     
     subscription
@@ -195,14 +227,15 @@ public fun subscribe(
 entry fun subscribe_entry(
     payment: Coin<SUI>,
     dataset: &VoiceDataset,
+    days: u64,
     c: &Clock,
     ctx: &mut TxContext,
 ) {
-    transfer::transfer(subscribe(payment, dataset, c, ctx), ctx.sender());
+    transfer::transfer(subscribe(payment, dataset, days, c, ctx), ctx.sender());
 }
 
 //////////////////////////////////////////
-// Access Control (for Seal integration) - FIXED!
+// Access Control
 
 /// Check if user has access to decrypt the dataset
 fun approve_internal(
@@ -211,18 +244,15 @@ fun approve_internal(
     sub: &Subscription,
     c: &Clock,
 ): bool {
-    // Check if subscription matches dataset
     if (object::id(dataset) != sub.dataset_id) {
         return false
     };
     
-    // ADD THIS TTL CHECK - Prevent expired subscriptions from accessing
-    if (c.timestamp_ms() > sub.created_at + SUBSCRIPTION_TTL_MS) {
+    // Check if subscription has expired
+    if (c.timestamp_ms() > sub.expires_at) {
         return false
     };
     
-    // FIXED: Check if the provided ID matches the stored encryption_id
-    // This ensures the encryption ID used during upload matches during download
     is_prefix(dataset.encryption_id, id)
 }
 
@@ -253,12 +283,24 @@ fun is_prefix(prefix: vector<u8>, word: vector<u8>): bool {
 //////////////////////////////////////////
 // View Functions
 
-public fun get_subscription_fee(): u64 {
-    SUBSCRIPTION_FEE
+public fun get_base_price_per_day(): u64 {
+    BASE_PRICE_PER_DAY
 }
 
 public fun get_dataset_creator(dataset: &VoiceDataset): address {
     dataset.creator
+}
+
+public fun get_dataset_duration(dataset: &VoiceDataset): u64 {
+    dataset.duration_seconds
+}
+
+public fun get_subscription_expiry(sub: &Subscription): u64 {
+    sub.expires_at
+}
+
+public fun is_subscription_active(sub: &Subscription, c: &Clock): bool {
+    c.timestamp_ms() <= sub.expires_at
 }
 
 #[test_only]

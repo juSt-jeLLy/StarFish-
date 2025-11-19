@@ -22,13 +22,22 @@ type DatasetInfo = {
   txDigest: string;
 };
 
-const PACKAGE_ID = "0xbab968bc9afe161a564f9d765b9d24e18d80f6b02406061cca8003643bfb8100";
+const PACKAGE_ID = "0x12ec468fafe7aaf490550244e73f3565bf8d90fe1370223c267d4cd89b368040";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
 ];
 
 const WALRUS_PUBLISHER_URL = "https://publisher.walrus-testnet.walrus.space";
+
+// Helper function to parse duration string to seconds
+const parseDurationToSeconds = (duration: string): number => {
+  if (duration === "30 seconds") return 30;
+  if (duration === "1 minute") return 60;
+  if (duration === "2 minutes") return 120;
+  if (duration === "5 minutes") return 300;
+  return 30; // Default
+};
 
 export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
   audioBlob,
@@ -68,12 +77,13 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       const audioData = new Uint8Array(arrayBuffer);
       console.log('✓ Audio file read:', audioData.length, 'bytes');
 
-   console.log('Step 2: Creating encryption ID...');
-const tempDatasetId = crypto.getRandomValues(new Uint8Array(32));
-const nonce = crypto.getRandomValues(new Uint8Array(5));
-const encryptionIdBytes = new Uint8Array([...tempDatasetId, ...nonce]);
-const id = toHex(encryptionIdBytes);
-console.log('✓ Encryption ID created:', id);
+      // 2. Create encryption ID
+      console.log('Step 2: Creating encryption ID...');
+      const tempDatasetId = crypto.getRandomValues(new Uint8Array(32));
+      const nonce = crypto.getRandomValues(new Uint8Array(5));
+      const encryptionIdBytes = new Uint8Array([...tempDatasetId, ...nonce]);
+      const id = toHex(encryptionIdBytes);
+      console.log('✓ Encryption ID created:', id);
 
       // 3. Encrypt the audio data
       console.log('Step 3: Encrypting audio data...');
@@ -129,10 +139,9 @@ console.log('✓ Encryption ID created:', id);
         arguments: [
           createTx.pure.string(language),
           createTx.pure.string(dialect),
-          createTx.pure.string(duration),
+          createTx.pure.string(duration), // Keep as string, contract will parse it
           createTx.pure.string(blobId),
-              createTx.pure.vector('u8', encryptionIdBytes),  // ← PASS THE ENCRYPTION ID!
-
+          createTx.pure.vector('u8', encryptionIdBytes),
           createTx.object('0x6'), // Clock object
         ],
       });
@@ -264,16 +273,27 @@ console.log('✓ Encryption ID created:', id);
     }
   };
 
+  // Calculate price preview based on duration
+  const durationSeconds = parseDurationToSeconds(duration);
+  const pricePerDay = (durationSeconds / 30) * 0.001;
+
   return (
     <Card className="p-6 neon-border bg-card/80 backdrop-blur">
       <div className="text-center">
         <h3 className="text-xl font-bold text-primary mb-4">
           Publish to Marketplace
         </h3>
-        <p className="text-sm text-muted-foreground mb-4">
+        <p className="text-sm text-muted-foreground mb-2">
           Your voice recording will be encrypted and uploaded to Walrus.
-          Other users can purchase access for 0.01 SUI.
         </p>
+        <div className="mb-4 p-3 bg-accent/10 border border-accent/30 rounded-lg">
+          <p className="text-sm font-bold text-accent">
+            💰 Pricing: {pricePerDay.toFixed(4)} SUI per day
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Duration: {duration} • Buyers can choose subscription length
+          </p>
+        </div>
         
         {!datasetInfo ? (
           <Button
