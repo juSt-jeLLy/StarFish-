@@ -14,8 +14,8 @@ import { AudioRecorder, downloadAudio } from "@/utils/audioRecorder";
 import { toast } from "sonner";
 import spaceBg from "@/assets/space-bg.jpg";
 
-const PACKAGE_ID = "0x65fa4fb259e3573326f4949959220224795c9c4888f15bbbbb2befd9e3457d3c";
-const REGISTRY_ID = "0x245eedd93194c575480582c13be45ab9a0f9a8befbff0f7294f51e2d286348d6";
+const PACKAGE_ID = "0xf02a406e6d8948b736b58d56cba64b89d1cd3b6d4af13355df44c8103e5b1a97";
+const REGISTRY_ID = "0x69d494bb468615cf21deb0620d9bcd0a1877892ea55754e0f50ce10aed5c943f";
 
 interface LanguageData {
   name: string;
