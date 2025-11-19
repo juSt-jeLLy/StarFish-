@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useCurrentAccount, useSuiClient, useSignPersonalMessage } from "@mysten/dapp-kit";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, Download, Loader2, Clock, AlertCircle } from "lucide-react";
+import { Database, Download, Loader2, Clock, AlertCircle, Filter, X, Languages } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import spaceBg from "@/assets/space-bg.jpg";
 import { SealClient, SessionKey } from '@mysten/seal';
@@ -10,7 +10,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { fromHex, toHex } from '@mysten/sui/utils';
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0x12ec468fafe7aaf490550244e73f3565bf8d90fe1370223c267d4cd89b368040";
+const PACKAGE_ID = "0xf86206244bb9118fadcc036033c49332c53cd8d8c78dffcdd50518c2fe98ba99";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
@@ -25,11 +25,17 @@ interface SubscriptionData {
   daysPurchased: number;
   language: string;
   dialect: string;
-  duration: string;
+  durationLabel: string;
+  durationSeconds: number;
   blobId: string;
   encryptionId: string;
   isExpired: boolean;
   timeRemaining: string;
+}
+
+interface LanguageData {
+  name: string;
+  dialects: string[];
 }
 
 const MySubscriptions = () => {
@@ -40,6 +46,12 @@ const MySubscriptions = () => {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<SessionKey | null>(null);
   const { mutate: signPersonalMessage } = useSignPersonalMessage();
+  
+  // Filter states
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("");
+  const [selectedDialect, setSelectedDialect] = useState<string>("");
+  const [showExpired, setShowExpired] = useState<boolean>(true);
+  const [availableLanguages, setAvailableLanguages] = useState<LanguageData[]>([]);
 
   const client = new SealClient({
     suiClient,
@@ -112,13 +124,6 @@ const MySubscriptions = () => {
           const blobId = datasetFields.blob_id;
           const expiresAt = parseInt(fields.expires_at);
           const isExpired = Date.now() > expiresAt;
-          
-          // Reconstruct duration string
-          const durationSeconds = parseInt(datasetFields.duration_seconds);
-          let durationStr = "30 seconds";
-          if (durationSeconds === 60) durationStr = "1 minute";
-          else if (durationSeconds === 120) durationStr = "2 minutes";
-          else if (durationSeconds === 300) durationStr = "5 minutes";
 
           return {
             id: fields.id.id,
@@ -128,7 +133,8 @@ const MySubscriptions = () => {
             daysPurchased: parseInt(fields.days_purchased),
             language: datasetFields.language,
             dialect: datasetFields.dialect,
-            duration: durationStr,
+            durationLabel: datasetFields.duration_label, // Use on-chain label
+            durationSeconds: parseInt(datasetFields.duration_seconds),
             blobId,
             encryptionId,
             isExpired,
@@ -138,14 +144,32 @@ const MySubscriptions = () => {
       );
 
       const validSubs = subsData.filter(Boolean) as SubscriptionData[];
+      
       // Sort: active first, then by expiry date
       validSubs.sort((a, b) => {
         if (a.isExpired !== b.isExpired) return a.isExpired ? 1 : -1;
         return a.expiresAt - b.expiresAt;
       });
+      
       setSubscriptions(validSubs);
+
+      // Extract unique languages and their dialects
+      const languageMap = new Map<string, Set<string>>();
+      validSubs.forEach(sub => {
+        if (!languageMap.has(sub.language)) {
+          languageMap.set(sub.language, new Set());
+        }
+        languageMap.get(sub.language)?.add(sub.dialect);
+      });
+
+      const languages: LanguageData[] = Array.from(languageMap.entries()).map(([name, dialectSet]) => ({
+        name,
+        dialects: Array.from(dialectSet).sort(),
+      }));
+      setAvailableLanguages(languages.sort((a, b) => a.name.localeCompare(b.name)));
     } catch (error) {
       console.error("Error loading subscriptions:", error);
+      toast.error("Failed to load subscriptions");
     } finally {
       setLoading(false);
     }
@@ -255,6 +279,23 @@ const MySubscriptions = () => {
     loadSubscriptions();
   };
 
+  // Filter subscriptions
+  const filteredSubscriptions = subscriptions.filter(sub => {
+    if (!showExpired && sub.isExpired) return false;
+    if (selectedLanguage && sub.language !== selectedLanguage) return false;
+    if (selectedDialect && sub.dialect !== selectedDialect) return false;
+    return true;
+  });
+
+  // Get dialects for selected language
+  const availableDialects = selectedLanguage 
+    ? availableLanguages.find(l => l.name === selectedLanguage)?.dialects || []
+    : [];
+
+  // Statistics
+  const activeCount = subscriptions.filter(s => !s.isExpired).length;
+  const expiredCount = subscriptions.filter(s => s.isExpired).length;
+
   return (
     <div className="min-h-screen relative overflow-hidden">
       <div 
@@ -273,14 +314,14 @@ const MySubscriptions = () => {
 
       <div className="relative z-20 pt-24 pb-12 px-4">
         <div className="container mx-auto max-w-6xl">
-          <div className="flex justify-between items-center mb-12">
+          <div className="flex justify-between items-center mb-8">
             <h1 className="text-4xl md:text-6xl font-bold neon-text glitch">
               MY SUBSCRIPTIONS
             </h1>
             <Button 
               onClick={handleRefresh}
               disabled={loading}
-              className="bg-primary hover:bg-primary/90"
+              className="bg-primary hover:bg-primary/90 font-bold pixel-border"
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Refresh'}
             </Button>
@@ -299,73 +340,263 @@ const MySubscriptions = () => {
           ) : subscriptions.length === 0 ? (
             <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
               <Database className="w-16 h-16 text-secondary mx-auto mb-4" />
-              <p className="text-xl text-primary mb-2">No Active Subscriptions</p>
+              <p className="text-xl text-primary mb-2">No Subscriptions Yet</p>
               <p className="text-muted-foreground">
                 Purchase voice datasets from the marketplace to access them here
               </p>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {subscriptions.map((sub) => (
-                <Card
-                  key={sub.id}
-                  className={`p-6 neon-border bg-card/80 backdrop-blur hover-lift ${
-                    sub.isExpired ? 'opacity-60' : ''
-                  }`}
-                >
-                  {sub.isExpired && (
-                    <div className="mb-4 p-2 bg-destructive/20 border border-destructive rounded flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-destructive" />
-                      <span className="text-xs text-destructive font-bold">EXPIRED</span>
-                    </div>
-                  )}
-                  
-                  <div className="mb-4">
-                    <h3 className="text-xl font-bold text-primary mb-2">
-                      {sub.language} - {sub.dialect}
-                    </h3>
-                    <div className="space-y-1 text-sm text-muted-foreground">
-                      <p>Duration: {sub.duration}</p>
-                      <p>Purchased: {new Date(sub.createdAt).toLocaleDateString()}</p>
-                      <p>For: {sub.daysPurchased} day{sub.daysPurchased !== 1 ? 's' : ''}</p>
-                      <div className="flex items-center gap-2 mt-2">
-                        <Clock className="w-4 h-4" />
-                        <span className={`font-bold ${
-                          sub.isExpired ? 'text-destructive' : 'text-accent'
-                        }`}>
-                          {sub.timeRemaining}
-                        </span>
-                      </div>
-                      <p className="text-xs break-all">ID: {sub.encryptionId.slice(0, 16)}...</p>
-                    </div>
+            <>
+              {/* Statistics Bar */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <Card className="p-4 neon-border bg-card/80 backdrop-blur">
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-accent">{subscriptions.length}</p>
+                    <p className="text-sm text-muted-foreground">Total Subscriptions</p>
+                  </div>
+                </Card>
+                <Card className="p-4 neon-border bg-card/80 backdrop-blur">
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-primary">{activeCount}</p>
+                    <p className="text-sm text-muted-foreground">Active</p>
+                  </div>
+                </Card>
+                <Card className="p-4 neon-border bg-card/80 backdrop-blur">
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-destructive">{expiredCount}</p>
+                    <p className="text-sm text-muted-foreground">Expired</p>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Filters */}
+              <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-8">
+                <div className="space-y-4">
+                  {/* Status Filter */}
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <Filter className="w-6 h-6 text-primary" />
+                    <span className="text-lg font-bold text-primary">Status:</span>
+                    <Button
+                      variant={showExpired ? "default" : "outline"}
+                      onClick={() => setShowExpired(true)}
+                      className="pixel-border"
+                      size="sm"
+                    >
+                      Show All
+                    </Button>
+                    <Button
+                      variant={!showExpired ? "default" : "outline"}
+                      onClick={() => setShowExpired(false)}
+                      className="pixel-border"
+                      size="sm"
+                    >
+                      Active Only
+                    </Button>
                   </div>
 
+                  {/* Language Filter */}
+                  {availableLanguages.length > 1 && (
+                    <div className="flex items-center gap-4 flex-wrap border-t border-primary/20 pt-4">
+                      <Languages className="w-6 h-6 text-secondary" />
+                      <span className="text-lg font-bold text-secondary">Language:</span>
+                      <Button
+                        variant={selectedLanguage === "" ? "default" : "outline"}
+                        onClick={() => {
+                          setSelectedLanguage("");
+                          setSelectedDialect("");
+                        }}
+                        className="pixel-border"
+                        size="sm"
+                      >
+                        All Languages
+                      </Button>
+                      {availableLanguages.map(lang => (
+                        <Button
+                          key={lang.name}
+                          variant={selectedLanguage === lang.name ? "default" : "outline"}
+                          onClick={() => {
+                            setSelectedLanguage(lang.name);
+                            setSelectedDialect("");
+                          }}
+                          className="pixel-border"
+                          size="sm"
+                        >
+                          {lang.name}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Dialect Filter */}
+                  {selectedLanguage && availableDialects.length > 1 && (
+                    <div className="flex items-center gap-4 flex-wrap border-t border-secondary/20 pt-4 animate-slide-in">
+                      <Clock className="w-6 h-6 text-accent" />
+                      <span className="text-lg font-bold text-accent">Dialect:</span>
+                      <Button
+                        variant={selectedDialect === "" ? "default" : "outline"}
+                        onClick={() => setSelectedDialect("")}
+                        className="pixel-border"
+                        size="sm"
+                      >
+                        All Dialects
+                      </Button>
+                      {availableDialects.map(dialect => (
+                        <Button
+                          key={dialect}
+                          variant={selectedDialect === dialect ? "default" : "outline"}
+                          onClick={() => setSelectedDialect(dialect)}
+                          className="pixel-border"
+                          size="sm"
+                        >
+                          {dialect}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Active Filters Display */}
+                  {(selectedLanguage || selectedDialect || !showExpired) && (
+                    <div className="border-t border-primary/20 pt-4">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm text-muted-foreground">Active filters:</span>
+                        {!showExpired && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setShowExpired(true)}
+                            className="h-7 text-xs"
+                          >
+                            Active Only
+                            <X className="w-3 h-3 ml-1" />
+                          </Button>
+                        )}
+                        {selectedLanguage && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedLanguage("");
+                              setSelectedDialect("");
+                            }}
+                            className="h-7 text-xs"
+                          >
+                            {selectedLanguage}
+                            <X className="w-3 h-3 ml-1" />
+                          </Button>
+                        )}
+                        {selectedDialect && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => setSelectedDialect("")}
+                            className="h-7 text-xs"
+                          >
+                            {selectedDialect}
+                            <X className="w-3 h-3 ml-1" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              {/* Subscriptions Grid */}
+              {filteredSubscriptions.length === 0 ? (
+                <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
+                  <Database className="w-16 h-16 text-secondary mx-auto mb-4" />
+                  <p className="text-xl text-primary mb-2">No Subscriptions Found</p>
+                  <p className="text-muted-foreground mb-4">
+                    Try adjusting your filters
+                  </p>
                   <Button
-                    onClick={() => handleDownload(sub)}
-                    disabled={downloading === sub.id || sub.isExpired}
-                    className={`w-full font-bold pixel-border ${
-                      sub.isExpired 
-                        ? 'bg-gray-500 opacity-50 cursor-not-allowed' 
-                        : 'bg-gradient-to-r from-primary to-secondary text-background'
-                    }`}
+                    onClick={() => {
+                      setSelectedLanguage("");
+                      setSelectedDialect("");
+                      setShowExpired(true);
+                    }}
+                    className="bg-primary hover:bg-primary/90"
                   >
-                    {downloading === sub.id ? (
-                      <>
-                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                        DOWNLOADING...
-                      </>
-                    ) : sub.isExpired ? (
-                      'EXPIRED - RENEW TO ACCESS'
-                    ) : (
-                      <>
-                        <Download className="w-5 h-5 mr-2" />
-                        DOWNLOAD
-                      </>
-                    )}
+                    Clear All Filters
                   </Button>
                 </Card>
-              ))}
-            </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredSubscriptions.map((sub) => (
+                      <Card
+                        key={sub.id}
+                        className={`p-6 neon-border bg-card/80 backdrop-blur hover-lift transition-all ${
+                          sub.isExpired ? 'opacity-60' : ''
+                        }`}
+                      >
+                        {sub.isExpired && (
+                          <div className="mb-4 p-2 bg-destructive/20 border border-destructive rounded flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4 text-destructive" />
+                            <span className="text-xs text-destructive font-bold">EXPIRED</span>
+                          </div>
+                        )}
+                        
+                        <div className="mb-4">
+                          <h3 className="text-xl font-bold text-primary mb-2">
+                            {sub.language} - {sub.dialect}
+                          </h3>
+                          <div className="space-y-1 text-sm text-muted-foreground">
+                            <p>Duration: {sub.durationLabel}</p>
+                            <p>Purchased: {new Date(sub.createdAt).toLocaleDateString()}</p>
+                            <p>For: {sub.daysPurchased} day{sub.daysPurchased !== 1 ? 's' : ''}</p>
+                            <div className="flex items-center gap-2 mt-2">
+                              <Clock className="w-4 h-4" />
+                              <span className={`font-bold ${
+                                sub.isExpired ? 'text-destructive' : 'text-accent'
+                              }`}>
+                                {sub.timeRemaining}
+                              </span>
+                            </div>
+                            <p className="text-xs break-all mt-2 opacity-70">
+                              ID: {sub.encryptionId.slice(0, 16)}...
+                            </p>
+                          </div>
+                        </div>
+
+                        <Button
+                          onClick={() => handleDownload(sub)}
+                          disabled={downloading === sub.id || sub.isExpired}
+                          className={`w-full font-bold pixel-border ${
+                            sub.isExpired 
+                              ? 'bg-gray-500 opacity-50 cursor-not-allowed' 
+                              : 'bg-gradient-to-r from-primary to-secondary text-background hover:opacity-90'
+                          }`}
+                        >
+                          {downloading === sub.id ? (
+                            <>
+                              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                              DOWNLOADING...
+                            </>
+                          ) : sub.isExpired ? (
+                            'EXPIRED - RENEW TO ACCESS'
+                          ) : (
+                            <>
+                              <Download className="w-5 h-5 mr-2" />
+                              DOWNLOAD
+                            </>
+                          )}
+                        </Button>
+                      </Card>
+                    ))}
+                  </div>
+
+                  {/* Results Summary */}
+                  <div className="flex justify-center gap-4 mt-8">
+                    <div className="text-center text-muted-foreground">
+                      <p className="text-sm">
+                        Showing {filteredSubscriptions.length} of {subscriptions.length} subscription{subscriptions.length !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
           )}
         </div>
       </div>
