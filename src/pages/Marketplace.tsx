@@ -2,14 +2,14 @@ import { useState, useEffect } from "react";
 import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Database, Languages, ShoppingCart, Loader2, Filter } from "lucide-react";
+import { Database, Languages, ShoppingCart, Loader2, Filter, Clock, Info } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import spaceBg from "@/assets/space-bg.jpg";
 import { Transaction } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0xbab968bc9afe161a564f9d765b9d24e18d80f6b02406061cca8003643bfb8100";
-const SUBSCRIPTION_FEE = 10_000_000; // 0.01 SUI in MIST
+const PACKAGE_ID = "0x12ec468fafe7aaf490550244e73f3565bf8d90fe1370223c267d4cd89b368040";
+const BASE_PRICE_PER_DAY = 1_000_000; // 0.001 SUI in MIST
 
 interface DatasetData {
   id: string;
@@ -17,9 +17,18 @@ interface DatasetData {
   language: string;
   dialect: string;
   duration: string;
+  durationSeconds: number;
   blobId: string;
   createdAt: number;
 }
+
+const dayOptions = [
+  { days: 1, label: "1 Day" },
+  { days: 7, label: "7 Days" },
+  { days: 30, label: "30 Days" },
+  { days: 90, label: "90 Days" },
+  { days: 365, label: "1 Year" },
+];
 
 const Marketplace = () => {
   const currentAccount = useCurrentAccount();
@@ -31,6 +40,7 @@ const Marketplace = () => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [myDatasets, setMyDatasets] = useState<Set<string>>(new Set());
   const [mySubscriptions, setMySubscriptions] = useState<Set<string>>(new Set());
+  const [selectedDays, setSelectedDays] = useState<{ [key: string]: number }>({});
 
   useEffect(() => {
     loadMarketplace();
@@ -38,9 +48,25 @@ const Marketplace = () => {
     return () => clearInterval(interval);
   }, [currentAccount?.address]);
 
+  const calculatePrice = (durationSeconds: number, days: number): number => {
+    const durationMultiplier = durationSeconds / 30;
+    return BASE_PRICE_PER_DAY * durationMultiplier * days;
+  };
+
+  const formatPrice = (mist: number): string => {
+    return (mist / 1_000_000_000).toFixed(4);
+  };
+
+  const parseDurationToSeconds = (duration: string): number => {
+    if (duration === "30 seconds") return 30;
+    if (duration === "1 minute") return 60;
+    if (duration === "2 minutes") return 120;
+    if (duration === "5 minutes") return 300;
+    return 30;
+  };
+
   const loadMarketplace = async () => {
     try {
-      // Get all VoiceDataset objects from events
       const allObjects = await suiClient.queryEvents({
         query: {
           MoveEventType: `${PACKAGE_ID}::voice_marketplace::DatasetCreated`,
@@ -61,12 +87,20 @@ const Marketplace = () => {
             const fields = (dataset.data?.content as any)?.fields;
             if (!fields) return null;
 
+            // Reconstruct duration string from seconds
+            const durationSeconds = parseInt(fields.duration_seconds);
+            let durationStr = "30 seconds";
+            if (durationSeconds === 60) durationStr = "1 minute";
+            else if (durationSeconds === 120) durationStr = "2 minutes";
+            else if (durationSeconds === 300) durationStr = "5 minutes";
+
             return {
               id: datasetId,
               creator: fields.creator,
               language: fields.language,
               dialect: fields.dialect,
-              duration: fields.duration,
+              duration: durationStr,
+              durationSeconds,
               blobId: fields.blob_id,
               createdAt: parseInt(fields.created_at),
             };
@@ -80,7 +114,15 @@ const Marketplace = () => {
       const validDatasets = datasetsData.filter(Boolean) as DatasetData[];
       setDatasets(validDatasets);
 
-      // Load user's own datasets and subscriptions
+      // Initialize default days (7 days) for each dataset
+      const defaultDays: { [key: string]: number } = {};
+      validDatasets.forEach(d => {
+        if (!selectedDays[d.id]) {
+          defaultDays[d.id] = 7;
+        }
+      });
+      setSelectedDays(prev => ({ ...defaultDays, ...prev }));
+
       if (currentAccount?.address) {
         const myDatasetIds = new Set(
           validDatasets
@@ -89,7 +131,6 @@ const Marketplace = () => {
         );
         setMyDatasets(myDatasetIds);
 
-        // Get user's subscriptions
         const subs = await suiClient.getOwnedObjects({
           owner: currentAccount.address,
           options: { showContent: true },
@@ -129,23 +170,24 @@ const Marketplace = () => {
       return;
     }
 
+    const days = selectedDays[dataset.id] || 7;
+    const price = calculatePrice(dataset.durationSeconds, days);
+
     setPurchasing(dataset.id);
 
     try {
       const tx = new Transaction();
       tx.setGasBudget(10000000);
 
-      // Split the subscription fee from the gas coin
-      // This is the recommended pattern - gas coin is automatically available as tx.gas
-      const [paymentCoin] = tx.splitCoins(tx.gas, [SUBSCRIPTION_FEE]);
+      const [paymentCoin] = tx.splitCoins(tx.gas, [price]);
 
-      // Call subscribe_entry with the split coin
       tx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
         arguments: [
-          paymentCoin,             // Payment coin (split from gas)
-          tx.object(dataset.id),   // VoiceDataset object
-          tx.object('0x6'),        // Clock object
+          paymentCoin,
+          tx.object(dataset.id),
+          tx.pure.u64(days),
+          tx.object('0x6'),
         ],
       });
 
@@ -154,7 +196,7 @@ const Marketplace = () => {
         {
           onSuccess: (result) => {
             console.log("Purchase successful:", result.digest);
-            toast.success("Purchase successful! Check 'My Subscriptions'");
+            toast.success(`Subscription purchased for ${days} day(s)!`);
             loadMarketplace();
           },
           onError: (error) => {
@@ -184,7 +226,13 @@ const Marketplace = () => {
     if (mySubscriptions.has(dataset.id)) {
       return { text: "OWNED", disabled: true, variant: "outline" as const };
     }
-    return { text: "PURCHASE (0.01 SUI)", disabled: false, variant: "default" as const };
+    const days = selectedDays[dataset.id] || 7;
+    const price = calculatePrice(dataset.durationSeconds, days);
+    return { 
+      text: `PURCHASE (${formatPrice(price)} SUI)`, 
+      disabled: false, 
+      variant: "default" as const 
+    };
   };
 
   return (
@@ -205,9 +253,21 @@ const Marketplace = () => {
 
       <div className="relative z-20 pt-24 pb-12 px-4">
         <div className="container mx-auto max-w-7xl">
-          <h1 className="text-4xl md:text-6xl font-bold text-center mb-12 neon-text glitch">
+          <h1 className="text-4xl md:text-6xl font-bold text-center mb-8 neon-text glitch">
             VOICE MARKETPLACE
           </h1>
+
+          {/* Pricing Info Banner */}
+          <Card className="p-4 neon-border bg-card/80 backdrop-blur mb-8">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-primary flex-shrink-0 mt-1" />
+              <div className="text-sm text-muted-foreground">
+                <p className="font-bold text-primary mb-1">Dynamic Pricing:</p>
+                <p>Base price: 0.001 SUI/day for 30 seconds</p>
+                <p>• 1 minute = 0.002 SUI/day • 2 minutes = 0.004 SUI/day • 5 minutes = 0.01 SUI/day</p>
+              </div>
+            </div>
+          </Card>
 
           {/* Language Filter */}
           <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-8">
@@ -253,6 +313,9 @@ const Marketplace = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredDatasets.map((dataset) => {
                   const buttonState = getButtonState(dataset);
+                  const days = selectedDays[dataset.id] || 7;
+                  const price = calculatePrice(dataset.durationSeconds, days);
+                  const isOwned = myDatasets.has(dataset.id) || mySubscriptions.has(dataset.id);
                   
                   return (
                     <Card
@@ -282,10 +345,37 @@ const Marketplace = () => {
                           <span className="text-primary font-bold">Walrus</span>
                         </div>
                         <div className="flex items-center justify-between">
-                          <span className="text-foreground/70">License:</span>
-                          <span className="text-primary font-bold">AI Training</span>
+                          <span className="text-foreground/70">Price/Day:</span>
+                          <span className="text-accent font-bold">
+                            {formatPrice(calculatePrice(dataset.durationSeconds, 1))} SUI
+                          </span>
                         </div>
                       </div>
+
+                      {!isOwned && (
+                        <div className="mb-4">
+                          <label className="text-sm font-bold text-primary mb-2 flex items-center gap-2">
+                            <Clock className="w-4 h-4" />
+                            Subscription Duration:
+                          </label>
+                          <div className="grid grid-cols-5 gap-1 mt-2">
+                            {dayOptions.map(option => (
+                              <Button
+                                key={option.days}
+                                variant={selectedDays[dataset.id] === option.days ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => setSelectedDays(prev => ({ ...prev, [dataset.id]: option.days }))}
+                                className="text-xs py-1 h-auto"
+                              >
+                                {option.label}
+                              </Button>
+                            ))}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2 text-center">
+                            Total: <span className="text-accent font-bold">{formatPrice(price)} SUI</span> for {days} day(s)
+                          </p>
+                        </div>
+                      )}
 
                       <Button
                         onClick={() => handlePurchase(dataset)}
