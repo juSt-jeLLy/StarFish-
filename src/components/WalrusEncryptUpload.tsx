@@ -13,6 +13,8 @@ interface WalrusEncryptUploadProps {
   language: string;
   dialect: string;
   duration: string;
+  durationId: string;
+  registryId: string;
   onSuccess: (datasetInfo: DatasetInfo) => void;
 }
 
@@ -22,7 +24,7 @@ type DatasetInfo = {
   txDigest: string;
 };
 
-const PACKAGE_ID = "0x12ec468fafe7aaf490550244e73f3565bf8d90fe1370223c267d4cd89b368040";
+const PACKAGE_ID = "0x65fa4fb259e3573326f4949959220224795c9c4888f15bbbbb2befd9e3457d3c";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
@@ -36,6 +38,16 @@ const parseDurationToSeconds = (duration: string): number => {
   if (duration === "1 minute") return 60;
   if (duration === "2 minutes") return 120;
   if (duration === "5 minutes") return 300;
+  
+  // Try to extract number from custom duration labels
+  const match = duration.match(/(\d+)\s*(second|minute|min|sec)/i);
+  if (match) {
+    const value = parseInt(match[1]);
+    const unit = match[2].toLowerCase();
+    if (unit.startsWith('min')) return value * 60;
+    return value;
+  }
+  
   return 30; // Default
 };
 
@@ -44,6 +56,8 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
   language,
   dialect,
   duration,
+  durationId,
+  registryId,
   onSuccess,
 }) => {
   const [isUploading, setIsUploading] = useState(false);
@@ -129,7 +143,7 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
         throw new Error('Unexpected storage response format');
       }
 
-      // 5. Create dataset on Sui blockchain
+      // 5. Create dataset on Sui blockchain with on-chain category validation
       console.log('Step 5: Creating dataset on blockchain...');
       toast.info("Creating dataset on blockchain...");
       const createTx = new Transaction();
@@ -137,12 +151,13 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       createTx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::create_dataset_entry`,
         arguments: [
-          createTx.pure.string(language),
-          createTx.pure.string(dialect),
-          createTx.pure.string(duration), // Keep as string, contract will parse it
-          createTx.pure.string(blobId),
-          createTx.pure.vector('u8', encryptionIdBytes),
-          createTx.object('0x6'), // Clock object
+          createTx.object(registryId),        // CategoryRegistry
+          createTx.pure.string(language),     // Language name
+          createTx.pure.string(dialect),      // Dialect name
+          createTx.object(durationId),        // DurationOption object
+          createTx.pure.string(blobId),       // Blob ID
+          createTx.pure.vector('u8', encryptionIdBytes), // Encryption ID
+          createTx.object('0x6'),             // Clock object
         ],
       });
 
@@ -211,7 +226,16 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
             },
             onError: (error: any) => {
               console.error('✗ Create dataset error:', error);
-              reject(error);
+              const errorMsg = error?.message || 'Unknown error';
+              
+              // Handle specific contract errors with user-friendly messages
+              if (errorMsg.includes('ELanguageNotFound') || errorMsg.includes('4')) {
+                reject(new Error(`Language "${language}" not found. Please add it first.`));
+              } else if (errorMsg.includes('EDialectNotFound') || errorMsg.includes('5')) {
+                reject(new Error(`Dialect "${dialect}" not found for ${language}. Please add it first.`));
+              } else {
+                reject(error);
+              }
             },
           }
         );
@@ -365,4 +389,4 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
   );
 };
 
-export default WalrusEncryptUpload;
+export default WalrusEncryptUpload

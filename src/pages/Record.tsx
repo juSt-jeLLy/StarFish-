@@ -1,13 +1,33 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Mic, Square, Languages, Clock, Download, CheckCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Mic, Square, Languages, Clock, Download, CheckCircle, Loader2, Plus, X } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import WaveformVisualizer from "@/components/WaveformVisualizer";
-import { WalrusEncryptUpload } from "@/components/WalrusEncryptUpload.tsx";
+import { WalrusEncryptUpload } from "@/components/WalrusEncryptUpload";
+import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
+import { Transaction } from '@mysten/sui/transactions';
 import { AudioRecorder, downloadAudio } from "@/utils/audioRecorder";
 import { toast } from "sonner";
 import spaceBg from "@/assets/space-bg.jpg";
+
+const PACKAGE_ID = "0x65fa4fb259e3573326f4949959220224795c9c4888f15bbbbb2befd9e3457d3c";
+const REGISTRY_ID = "0x245eedd93194c575480582c13be45ab9a0f9a8befbff0f7294f51e2d286348d6";
+
+interface LanguageData {
+  name: string;
+  dialects: { name: string; description: string }[];
+  sampleTexts: string[];
+}
+
+interface DurationData {
+  id: string;
+  label: string;
+  seconds: number;
+}
 
 interface DatasetInfo {
   blobId: string;
@@ -15,66 +35,40 @@ interface DatasetInfo {
   txDigest: string;
 }
 
-const languages = [
-  { name: "English", dialects: ["American", "British", "Australian", "Indian"] },
-  { name: "Spanish", dialects: ["Castilian", "Mexican", "Argentine", "Colombian"] },
-  { name: "Mandarin", dialects: ["Beijing", "Cantonese", "Taiwanese", "Sichuanese"] },
-  { name: "French", dialects: ["Parisian", "Canadian", "Belgian", "Swiss"] },
-  { name: "Arabic", dialects: ["Egyptian", "Levantine", "Gulf", "Maghrebi"] },
-  { name: "Hindi", dialects: ["Standard", "Haryanvi", "Bhojpuri", "Rajasthani"] },
-  { name: "Portuguese", dialects: ["Brazilian", "European", "African", "Asian"] },
-  { name: "Bengali", dialects: ["Standard", "Chittagonian", "Sylheti", "Rajbangshi"] },
-];
-
-const durations = ["30 seconds", "1 minute", "2 minutes", "5 minutes"];
-
-const languageTexts: { [key: string]: string[] } = {
-  English: [
-    "The quick brown fox jumps over the lazy dog while birds sing in the morning sunshine. Gentle breezes carry the scent of fresh flowers across the peaceful meadow.",
-    "Technology transforms how we communicate and interact with the world around us. Innovation continues to accelerate, opening new possibilities for education and collaboration.",
-    "Reading books opens new worlds and expands our imagination beyond boundaries. Stories allow us to experience lives different from our own and explore distant places."
-  ],
-  Spanish: [
-    "El rápido zorro marrón salta sobre el perro perezoso bajo el cálido sol de la mañana. Los pájaros cantan alegremente mientras la brisa acaricia los campos verdes.",
-    "La tecnología moderna transforma nuestra forma de vivir y comunicarnos cada día. Los avances nos conectan con personas de todo el mundo instantáneamente.",
-    "La lectura de libros abre puertas a nuevos mundos llenos de imaginación y conocimiento. Cada historia nos transporta a lugares mágicos y experiencias únicas."
-  ],
-  Mandarin: [
-    "快速的棕色狐狸跳过懒狗，在温暖的阳光下。鸟儿在清晨歌唱，微风轻轻吹过绿色的田野，带来花香和宁静。",
-    "现代技术改变了我们的生活方式和沟通方式。创新不断加速，为教育和合作开辟了新的可能性。",
-    "阅读书籍打开了通往新世界的大门，扩展了我们的想象力。故事让我们体验不同的生活，探索遥远的地方。"
-  ],
-  French: [
-    "Le rapide renard brun saute par-dessus le chien paresseux sous le soleil chaud du matin. Les oiseaux chantent joyeusement dans la brise légère des champs verts.",
-    "La technologie moderne transforme notre façon de vivre et de communiquer chaque jour. Les progrès nous connectent avec des personnes du monde entier instantanément.",
-    "La lecture de livres ouvre des portes vers de nouveaux mondes pleins d'imagination et de connaissances. Chaque histoire nous transporte vers des lieux magiques."
-  ],
-  Arabic: [
-    "يقفز الثعلب البني السريع فوق الكلب الكسول تحت أشعة الشمس الدافئة. الطيور تغني بسعادة في النسيم الخفيف للحقول الخضراء.",
-    "تغير التكنولوجيا الحديثة طريقة عيشنا وتواصلنا كل يوم. التقدم يربطنا بأشخاص من جميع أنحاء العالم على الفور.",
-    "فتح الكتب أبوابًا لعوالم جديدة مليئة بالخيال والمعرفة. كل قصة تنقلنا إلى أماكن سحرية وتجارب فريدة."
-  ],
-  Hindi: [
-    "तेज भूरी लोमड़ी आलसी कुत्ते के ऊपर कूदती है, गर्म धूप में। पक्षी हरे खेतों की हल्की हवा में खुशी से गाते हैं।",
-    "आधुनिक प्रौद्योगिकी हर दिन हमारे जीने और संवाद करने के तरीके को बदल रही है। प्रगति हमें तुरंत दुनिया भर के लोगों से जोड़ती है।",
-    "किताबें पढ़ना कल्पना और ज्ञान से भरी नई दुनिया के दरवाजे खोलती है। हर कहानी हमें जादुई स्थानों और अनूठे अनुभवों में ले जाती है।"
-  ],
-  Portuguese: [
-    "A rápida raposa marrom pula sobre o cão preguiçoso sob o sol quente da manhã. Os pássaros cantam alegremente na brisa leve dos campos verdes.",
-    "A tecnologia moderna transforma nossa forma de viver e nos comunicar a cada dia. Os avanços nos conectam com pessoas de todo o mundo instantaneamente.",
-    "A leitura de livros abre portas para novos mundos cheios de imaginação e conhecimento. Cada história nos transporta para lugares mágicos e experiências únicas."
-  ],
-  Bengali: [
-    "দ্রুত বাদামি শিয়াল উষ্ণ সকালের রোদে অলস কুকুরের উপর দিয়ে লাফ দেয়। পাখিরা সবুজ মাঠের হালকা বাতাসে খুশিতে গান গায়।",
-    "আধুনিক প্রযুক্তি প্রতিদিন আমাদের বেঁচে থাকা এবং যোগাযোগের way তরীকে রূপান্তরিত করে। অগ্রগতি আমাদের সাথে সারা বিশ্বের মানুষকে তাত্ক্ষণিকভাবে সংযুক্ত করে।",
-    "বই পড়া কল্পনা ও জ্ঞানপূর্ণ নতুন বিশ্বের দরজা খুলে দেয়। প্রতিটি গল্প আমাদের জাদুকরী জায়গা এবং অনন্য অভিজ্ঞতায় নিয়ে যায়।"
-  ]
-};
-
 const Record = () => {
-  const [selectedLanguage, setSelectedLanguage] = useState("");
+  const currentAccount = useCurrentAccount();
+  const suiClient = useSuiClient();
+  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  
+  // Form state
+  const [showAddLanguageForm, setShowAddLanguageForm] = useState(false);
+  const [showAddDialectForm, setShowAddDialectForm] = useState(false);
+  const [showAddDurationForm, setShowAddDurationForm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // Language form
+  const [languageName, setLanguageName] = useState("");
+  const [sampleTexts, setSampleTexts] = useState("");
+  
+  // Dialect form
+  const [dialectName, setDialectName] = useState("");
+  const [dialectDescription, setDialectDescription] = useState("");
+  
+  // Duration form
+  const [durationLabel, setDurationLabel] = useState("");
+  const [durationSeconds, setDurationSeconds] = useState("");
+  
+  // Data State
+  const [languages, setLanguages] = useState<LanguageData[]>([]);
+  const [durations, setDurations] = useState<DurationData[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  // Selection State
+  const [selectedLanguage, setSelectedLanguage] = useState<LanguageData | null>(null);
   const [selectedDialect, setSelectedDialect] = useState("");
-  const [selectedDuration, setSelectedDuration] = useState("");
+  const [selectedDuration, setSelectedDuration] = useState<DurationData | null>(null);
+  
+  // Recording State
   const [currentText, setCurrentText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [audioRecorder, setAudioRecorder] = useState<AudioRecorder | null>(null);
@@ -82,9 +76,258 @@ const Record = () => {
   const [visualizerData, setVisualizerData] = useState<Uint8Array | null>(null);
   const [publishedDataset, setPublishedDataset] = useState<DatasetInfo | null>(null);
 
-  const handleLanguageSelect = (language: string) => {
+  useEffect(() => {
+    loadCategoriesAndDurations();
+  }, []);
+
+  const loadCategoriesAndDurations = async () => {
+    setLoading(true);
+    try {
+      const registry = await suiClient.getObject({
+        id: REGISTRY_ID,
+        options: { showContent: true },
+      });
+
+      const fields = (registry.data?.content as any)?.fields;
+      if (fields?.languages?.fields?.contents) {
+        const languagesMap = fields.languages.fields.contents;
+        const loadedLanguages: LanguageData[] = [];
+        
+        for (const entry of languagesMap) {
+          const langName = entry.fields.key;
+          const langData = entry.fields.value.fields;
+          
+          const dialects = langData.dialects.map((d: any) => ({
+            name: d.fields.name,
+            description: d.fields.description || "",
+          }));
+          
+          loadedLanguages.push({
+            name: langName,
+            dialects,
+            sampleTexts: langData.sample_texts || [],
+          });
+        }
+        
+        setLanguages(loadedLanguages);
+      }
+
+      const durationsResult = await suiClient.queryEvents({
+        query: {
+          MoveEventType: `${PACKAGE_ID}::voice_marketplace::DurationOptionCreated`,
+        },
+        limit: 1000,
+      });
+
+      const loadedDurations: DurationData[] = await Promise.all(
+        durationsResult.data.map(async (event: any) => {
+          const durationId = event.parsedJson.duration_id;
+          try {
+            const durationObj = await suiClient.getObject({
+              id: durationId,
+              options: { showContent: true },
+            });
+            const fields = (durationObj.data?.content as any)?.fields;
+            if (!fields) return null;
+            return {
+              id: durationId,
+              label: fields.label,
+              seconds: parseInt(fields.seconds),
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      setDurations(loadedDurations.filter(Boolean) as DurationData[]);
+    } catch (error) {
+      console.error("Error loading categories:", error);
+      toast.error("Failed to load categories");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddLanguage = async () => {
+    if (!currentAccount?.address || !languageName.trim() || !sampleTexts.trim()) {
+      toast.error("Please fill all fields");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const tx = new Transaction();
+      
+      // Split by double newlines to treat paragraphs as separate texts
+      const textsArray = sampleTexts
+        .split(/\n\n+/)  // Split on 2 or more newlines (paragraph breaks)
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
+      
+      if (textsArray.length === 0) {
+        toast.error("Please add at least one sample text paragraph");
+        setIsSubmitting(false);
+        return;
+      }
+      
+      // Calculate estimated data size and set appropriate gas budget
+      const totalTextLength = textsArray.reduce((sum, text) => sum + text.length, 0);
+      // Base gas + additional gas based on text size (roughly 100k MIST per 1KB of text)
+      const estimatedGas = Math.max(20_000_000, 10_000_000 + Math.ceil(totalTextLength / 1000) * 100_000);
+      tx.setGasBudget(estimatedGas);
+      
+      console.log(`Setting gas budget to ${estimatedGas} MIST for ${textsArray.length} texts totaling ${totalTextLength} characters`);
+      
+      tx.moveCall({
+        target: `${PACKAGE_ID}::voice_marketplace::add_language_entry`,
+        arguments: [
+          tx.object(REGISTRY_ID),
+          tx.pure.string(languageName.trim()),
+          tx.pure.vector('string', textsArray),
+          tx.object('0x6'),
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: () => {
+            toast.success(`Language "${languageName}" added with ${textsArray.length} sample text(s)!`);
+            setLanguageName("");
+            setSampleTexts("");
+            setShowAddLanguageForm(false);
+            loadCategoriesAndDurations();
+          },
+          onError: (error: any) => {
+            const errorMsg = error?.message || 'Unknown error';
+            if (errorMsg.includes('ELanguageAlreadyExists') || errorMsg.includes('8')) {
+              toast.error(`Language "${languageName}" already exists!`);
+            } else if (errorMsg.includes('InsufficientGas')) {
+              toast.error("Insufficient gas. Try reducing the length of your sample texts or add more SUI to your wallet.");
+            } else {
+              toast.error("Failed to add language: " + errorMsg);
+            }
+          },
+        }
+      );
+    } catch (error: any) {
+      toast.error(`Failed: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAddDialect = async () => {
+    if (!currentAccount?.address || !selectedLanguage || !dialectName.trim()) {
+      toast.error("Please fill all required fields");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const tx = new Transaction();
+      tx.setGasBudget(10000000);
+      
+      tx.moveCall({
+        target: `${PACKAGE_ID}::voice_marketplace::add_dialect_entry`,
+        arguments: [
+          tx.object(REGISTRY_ID),
+          tx.pure.string(selectedLanguage.name),
+          tx.pure.string(dialectName.trim()),
+          tx.pure.string(dialectDescription.trim() || ""),
+          tx.object('0x6'),
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: () => {
+            toast.success(`Dialect "${dialectName}" added to ${selectedLanguage.name}!`);
+            setDialectName("");
+            setDialectDescription("");
+            setShowAddDialectForm(false);
+            loadCategoriesAndDurations();
+            // Refresh selected language
+            const updatedLang = languages.find(l => l.name === selectedLanguage.name);
+            if (updatedLang) setSelectedLanguage(updatedLang);
+          },
+          onError: (error: any) => {
+            const errorMsg = error?.message || 'Unknown error';
+            if (errorMsg.includes('EDialectAlreadyExists') || errorMsg.includes('9')) {
+              toast.error(`Dialect "${dialectName}" already exists for ${selectedLanguage.name}!`);
+            } else {
+              toast.error("Failed to add dialect: " + errorMsg);
+            }
+          },
+        }
+      );
+    } catch (error: any) {
+      toast.error(`Failed: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAddDuration = async () => {
+    if (!currentAccount?.address || !durationLabel.trim() || !durationSeconds.trim()) {
+      toast.error("Please fill all fields");
+      return;
+    }
+
+    const seconds = parseInt(durationSeconds);
+    if (isNaN(seconds) || seconds <= 0) {
+      toast.error("Please enter a valid number of seconds");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const tx = new Transaction();
+      tx.setGasBudget(10000000);
+      
+      tx.moveCall({
+        target: `${PACKAGE_ID}::voice_marketplace::create_duration_option_entry`,
+        arguments: [
+          tx.object(REGISTRY_ID),
+          tx.pure.string(durationLabel.trim()),
+          tx.pure.u64(seconds),
+          tx.object('0x6'),
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: () => {
+            toast.success(`Duration option "${durationLabel}" created!`);
+            setDurationLabel("");
+            setDurationSeconds("");
+            setShowAddDurationForm(false);
+            loadCategoriesAndDurations();
+          },
+          onError: (error: any) => {
+            const errorMsg = error?.message || 'Unknown error';
+            if (errorMsg.includes('EDurationAlreadyExists') || errorMsg.includes('10')) {
+              toast.error(`Duration "${durationLabel}" already exists!`);
+            } else {
+              toast.error("Failed to create duration: " + errorMsg);
+            }
+          },
+        }
+      );
+    } catch (error: any) {
+      toast.error(`Failed: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLanguageSelect = (language: LanguageData) => {
     setSelectedLanguage(language);
     setSelectedDialect("");
+    setSelectedDuration(null);
     setCurrentText("");
     setRecordedBlob(null);
     setPublishedDataset(null);
@@ -92,15 +335,20 @@ const Record = () => {
 
   const handleDialectSelect = (dialect: string) => {
     setSelectedDialect(dialect);
+    setSelectedDuration(null);
+    setCurrentText("");
     setRecordedBlob(null);
     setPublishedDataset(null);
   };
 
-  const handleDurationSelect = (duration: string) => {
+  const handleDurationSelect = (duration: DurationData) => {
     setSelectedDuration(duration);
-    const texts = languageTexts[selectedLanguage] || languageTexts.English;
-    const randomText = texts[Math.floor(Math.random() * texts.length)];
-    setCurrentText(randomText);
+    if (selectedLanguage && selectedLanguage.sampleTexts.length > 0) {
+      const randomText = selectedLanguage.sampleTexts[
+        Math.floor(Math.random() * selectedLanguage.sampleTexts.length)
+      ];
+      setCurrentText(randomText);
+    }
     setRecordedBlob(null);
     setPublishedDataset(null);
   };
@@ -136,9 +384,9 @@ const Record = () => {
   };
 
   const handleDownload = () => {
-    if (recordedBlob) {
+    if (recordedBlob && selectedLanguage && selectedDialect) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = `voice-${selectedLanguage}-${selectedDialect}-${timestamp}.webm`;
+      const filename = `voice-${selectedLanguage.name}-${selectedDialect}-${timestamp}.webm`;
       downloadAudio(recordedBlob, filename);
       toast.success("Download started!");
     }
@@ -149,12 +397,22 @@ const Record = () => {
     toast.success("Dataset published to marketplace!");
   };
 
-  const handleNewRecording = () => {
-    setSelectedDuration("");
+  const resetToLanguages = () => {
+    setSelectedLanguage(null);
+    setSelectedDialect("");
+    setSelectedDuration(null);
     setCurrentText("");
     setRecordedBlob(null);
     setPublishedDataset(null);
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-12 h-12 text-primary animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -174,113 +432,409 @@ const Record = () => {
 
       <div className="relative z-20 pt-24 pb-12 px-4">
         <div className="container mx-auto max-w-6xl">
-          <h1 className="text-4xl md:text-6xl font-bold text-center mb-12 neon-text glitch">
+          <h1 className="text-4xl md:text-6xl font-bold neon-text glitch text-center mb-12">
             RECORD YOUR VOICE
           </h1>
 
-          {/* Language Selection */}
-          {!selectedLanguage && (
-            <div className="mb-12 animate-slide-in">
-              <h2 className="text-2xl font-bold mb-6 text-primary flex items-center justify-center gap-2">
-                <Languages className="w-8 h-8" />
-                SELECT LANGUAGE
-              </h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {languages.map((lang) => (
-                  <Card
-                    key={lang.name}
-                    className="p-6 cursor-pointer neon-border bg-card/50 backdrop-blur hover-lift text-center"
-                    onClick={() => handleLanguageSelect(lang.name)}
+          {/* Breadcrumb Navigation */}
+          {(selectedLanguage || selectedDialect || selectedDuration) && (
+            <div className="mb-8 flex items-center gap-2 text-sm">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={resetToLanguages}
+                className="text-primary hover:text-primary/80"
+              >
+                Languages
+              </Button>
+              {selectedLanguage && (
+                <>
+                  <span className="text-muted-foreground">/</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedDialect("");
+                      setSelectedDuration(null);
+                      setCurrentText("");
+                      setRecordedBlob(null);
+                      setPublishedDataset(null);
+                    }}
+                    className="text-secondary hover:text-secondary/80"
                   >
-                    <p className="text-xl font-bold text-primary">{lang.name}</p>
-                  </Card>
-                ))}
-              </div>
+                    {selectedLanguage.name}
+                  </Button>
+                </>
+              )}
+              {selectedDialect && (
+                <>
+                  <span className="text-muted-foreground">/</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedDuration(null);
+                      setCurrentText("");
+                      setRecordedBlob(null);
+                      setPublishedDataset(null);
+                    }}
+                    className="text-accent hover:text-accent/80"
+                  >
+                    {selectedDialect}
+                  </Button>
+                </>
+              )}
+              {selectedDuration && (
+                <>
+                  <span className="text-muted-foreground">/</span>
+                  <span className="text-foreground font-semibold">{selectedDuration.label}</span>
+                </>
+              )}
             </div>
           )}
 
-          {/* Dialect Selection */}
-          {selectedLanguage && !selectedDialect && (
-            <div className="mb-12 animate-slide-in">
-              <Button
-                variant="ghost"
-                onClick={() => setSelectedLanguage("")}
-                className="mb-4 text-secondary hover:text-secondary/80"
-              >
-                ← BACK TO LANGUAGES
-              </Button>
-              <h2 className="text-2xl font-bold mb-6 text-primary flex items-center justify-center gap-2">
-                SELECT DIALECT FOR {selectedLanguage.toUpperCase()}
-              </h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {languages
-                  .find((l) => l.name === selectedLanguage)
-                  ?.dialects.map((dialect) => (
-                    <Card
-                      key={dialect}
-                      className="p-6 cursor-pointer neon-border bg-card/50 backdrop-blur hover-lift text-center"
-                      onClick={() => handleDialectSelect(dialect)}
+          {/* LEVEL 1: Language Selection */}
+          {!selectedLanguage && (
+            <div className="animate-slide-in space-y-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-primary flex items-center gap-2">
+                  <Languages className="w-8 h-8" />
+                  SELECT LANGUAGE
+                </h2>
+                {!showAddLanguageForm && (
+                  <Button
+                    onClick={() => setShowAddLanguageForm(true)}
+                    className="bg-primary hover:bg-primary/90 font-bold"
+                  >
+                    <Plus className="w-5 h-5 mr-2" />
+                    Add Language
+                  </Button>
+                )}
+              </div>
+
+              {/* Add Language Form */}
+              {showAddLanguageForm && (
+                <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-xl font-bold text-primary">Add New Language</h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddLanguageForm(false);
+                        setLanguageName("");
+                        setSampleTexts("");
+                      }}
                     >
-                      <p className="text-xl font-bold text-secondary">{dialect}</p>
+                      <X className="w-5 h-5" />
+                    </Button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <Label className="text-foreground font-semibold">Language Name</Label>
+                      <Input
+                        value={languageName}
+                        onChange={(e) => setLanguageName(e.target.value)}
+                        placeholder="e.g., English, Spanish, Mandarin"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label className="text-foreground font-semibold">Sample Texts (separate paragraphs with blank lines)</Label>
+                      <Textarea
+                        value={sampleTexts}
+                        onChange={(e) => setSampleTexts(e.target.value)}
+                        placeholder="Enter first paragraph here...
+
+Press Enter twice (blank line) to separate paragraphs.
+
+Each paragraph will be a separate sample text for recording."
+                        rows={12}
+                        className="mt-2 font-mono text-sm"
+                      />
+                      <div className="flex justify-between items-start mt-2">
+                        <p className="text-xs text-muted-foreground">
+                          💡 <strong>Add at least 3 paragraphs</strong> - Separate each paragraph with a blank line (press Enter twice).
+                        </p>
+                        <p className="text-xs text-primary font-semibold whitespace-nowrap ml-2">
+                          {sampleTexts.split(/\n\n+/).filter(t => t.trim().length > 0).length} paragraph(s)
+                        </p>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        ⚠️ <strong>Note:</strong> Longer texts require more gas. Each paragraph can be 1-3 sentences for optimal gas costs.
+                      </p>
+                    </div>
+                    
+                    <Button
+                      onClick={handleAddLanguage}
+                      disabled={isSubmitting}
+                      className="bg-primary hover:bg-primary/90 w-full"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Adding...
+                        </>
+                      ) : (
+                        'Add Language'
+                      )}
+                    </Button>
+                  </div>
+                </Card>
+              )}
+
+              {/* Language Grid */}
+              {languages.length === 0 ? (
+                <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
+                  <p className="text-muted-foreground mb-4">
+                    No languages available. Add your first language above.
+                  </p>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {languages.map((lang) => (
+                    <Card
+                      key={lang.name}
+                      className="p-6 cursor-pointer neon-border bg-card/50 backdrop-blur hover-lift text-center"
+                      onClick={() => handleLanguageSelect(lang)}
+                    >
+                      <p className="text-xl font-bold text-primary">{lang.name}</p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        {lang.dialects.length} dialect(s)
+                      </p>
                     </Card>
                   ))}
-              </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Duration Selection */}
-          {selectedDialect && !selectedDuration && (
-            <div className="mb-12 animate-slide-in">
-              <Button
-                variant="ghost"
-                onClick={() => setSelectedDialect("")}
-                className="mb-4 text-secondary hover:text-secondary/80"
-              >
-                ← BACK TO DIALECTS
-              </Button>
-              <h2 className="text-2xl font-bold mb-6 text-primary flex items-center justify-center gap-2">
-                <Clock className="w-8 h-8" />
-                SELECT DURATION
-              </h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {durations.map((duration) => (
-                  <Card
-                    key={duration}
-                    className="p-6 cursor-pointer neon-border bg-card/50 backdrop-blur hover-lift text-center"
-                    onClick={() => handleDurationSelect(duration)}
-                  >
-                    <p className="text-xl font-bold text-accent">{duration}</p>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Recording Interface */}
-          {currentText && (
+          {/* LEVEL 2: Dialect Selection */}
+          {selectedLanguage && !selectedDialect && (
             <div className="animate-slide-in space-y-6">
-              <Button
-                variant="ghost"
-                onClick={handleNewRecording}
-                className="mb-4 text-secondary hover:text-secondary/80"
-              >
-                ← START NEW RECORDING
-              </Button>
-              
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-secondary">
+                  SELECT DIALECT FOR {selectedLanguage.name.toUpperCase()}
+                </h2>
+                {!showAddDialectForm && (
+                  <Button
+                    onClick={() => setShowAddDialectForm(true)}
+                    className="bg-secondary hover:bg-secondary/90 font-bold"
+                  >
+                    <Plus className="w-5 h-5 mr-2" />
+                    Add Dialect
+                  </Button>
+                )}
+              </div>
+
+              {/* Add Dialect Form */}
+              {showAddDialectForm && (
+                <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-xl font-bold text-secondary">
+                      Add Dialect to {selectedLanguage.name}
+                    </h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddDialectForm(false);
+                        setDialectName("");
+                        setDialectDescription("");
+                      }}
+                    >
+                      <X className="w-5 h-5" />
+                    </Button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <Label className="text-foreground font-semibold">Dialect Name</Label>
+                      <Input
+                        value={dialectName}
+                        onChange={(e) => setDialectName(e.target.value)}
+                        placeholder="e.g., American, British, Australian"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label className="text-foreground font-semibold">Description (optional)</Label>
+                      <Input
+                        value={dialectDescription}
+                        onChange={(e) => setDialectDescription(e.target.value)}
+                        placeholder="Brief description of this dialect"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <Button
+                      onClick={handleAddDialect}
+                      disabled={isSubmitting}
+                      className="bg-secondary hover:bg-secondary/90 w-full"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Adding...
+                        </>
+                      ) : (
+                        'Add Dialect'
+                      )}
+                    </Button>
+                  </div>
+                </Card>
+              )}
+
+              {/* Dialect Grid */}
+              {selectedLanguage.dialects.length === 0 ? (
+                <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
+                  <p className="text-muted-foreground mb-4">
+                    No dialects available for {selectedLanguage.name}. Add one above.
+                  </p>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {selectedLanguage.dialects.map((dialect) => (
+                    <Card
+                      key={dialect.name}
+                      className="p-6 cursor-pointer neon-border bg-card/50 backdrop-blur hover-lift text-center"
+                      onClick={() => handleDialectSelect(dialect.name)}
+                    >
+                      <p className="text-xl font-bold text-secondary">{dialect.name}</p>
+                      {dialect.description && (
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {dialect.description}
+                        </p>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* LEVEL 3: Duration Selection */}
+          {selectedDialect && !selectedDuration && (
+            <div className="animate-slide-in space-y-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-accent flex items-center gap-2">
+                  <Clock className="w-8 h-8" />
+                  SELECT DURATION
+                </h2>
+                {!showAddDurationForm && (
+                  <Button
+                    onClick={() => setShowAddDurationForm(true)}
+                    className="bg-accent hover:bg-accent/90 font-bold"
+                  >
+                    <Plus className="w-5 h-5 mr-2" />
+                    Add Duration
+                  </Button>
+                )}
+              </div>
+
+              {/* Add Duration Form */}
+              {showAddDurationForm && (
+                <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-xl font-bold text-accent">
+                      Add Duration for {selectedLanguage?.name} - {selectedDialect}
+                    </h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddDurationForm(false);
+                        setDurationLabel("");
+                        setDurationSeconds("");
+                      }}
+                    >
+                      <X className="w-5 h-5" />
+                    </Button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <Label className="text-foreground font-semibold">Duration Label</Label>
+                      <Input
+                        value={durationLabel}
+                        onChange={(e) => setDurationLabel(e.target.value)}
+                        placeholder="e.g., 30 seconds, 1 minute, 5 minutes"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label className="text-foreground font-semibold">Duration in Seconds</Label>
+                      <Input
+                        type="number"
+                        value={durationSeconds}
+                        onChange={(e) => setDurationSeconds(e.target.value)}
+                        placeholder="e.g., 30, 60, 300"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <Button
+                      onClick={handleAddDuration}
+                      disabled={isSubmitting}
+                      className="bg-accent hover:bg-accent/90 w-full"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        'Create Duration'
+                      )}
+                    </Button>
+                  </div>
+                </Card>
+              )}
+
+              {/* Duration Grid */}
+              {durations.length === 0 ? (
+                <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
+                  <p className="text-muted-foreground mb-4">
+                    No duration options available. Add one above.
+                  </p>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {durations.map((duration) => (
+                    <Card
+                      key={duration.id}
+                      className="p-6 cursor-pointer neon-border bg-card/50 backdrop-blur hover-lift text-center"
+                      onClick={() => handleDurationSelect(duration)}
+                    >
+                      <p className="text-xl font-bold text-accent">{duration.label}</p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        {duration.seconds} seconds
+                      </p>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* LEVEL 4: Recording Interface */}
+          {currentText && selectedDuration && (
+            <div className="animate-slide-in space-y-6">
               <Card className="p-8 neon-border bg-card/80 backdrop-blur">
                 <div className="mb-6">
                   <p className="text-sm text-muted-foreground mb-2 text-center">
-                    {selectedLanguage} - {selectedDialect} - {selectedDuration}
+                    {selectedLanguage?.name} - {selectedDialect} - {selectedDuration.label}
                   </p>
                   <h3 className="text-xl font-bold text-primary mb-4 text-center">READ THIS TEXT:</h3>
-                  <div className="max-h-96 overflow-y-auto p-4 bg-background/50 border-2 border-primary/30">
+                  <div className="max-h-96 overflow-y-auto p-4 bg-background/50 border-2 border-primary/30 rounded">
                     <p className="text-base text-foreground leading-relaxed text-left">
                       {currentText}
                     </p>
                   </div>
                 </div>
 
-                <div className="h-48 mb-6 relative overflow-hidden neon-border bg-background/50">
+                <div className="h-48 mb-6 relative overflow-hidden neon-border bg-background/50 rounded">
                   <WaveformVisualizer 
                     dataArray={visualizerData} 
                     isRecording={isRecording} 
@@ -345,7 +899,6 @@ const Record = () => {
                     </div>
                     
                     <div className="bg-background/50 border border-accent/30 rounded-lg p-4 space-y-6">
-                      {/* Walrus Blob */}
                       <div className="border border-secondary/30 rounded p-3 bg-background/30">
                         <dt className="text-muted-foreground font-semibold mb-2">Walrus Encrypted Blob</dt>
                         <dd className="text-foreground break-all font-mono text-xs mb-3 p-2 bg-background rounded">{publishedDataset.blobId}</dd>
@@ -359,7 +912,6 @@ const Record = () => {
                         </a>
                       </div>
                       
-                      {/* Sui Object */}
                       <div className="border border-accent/30 rounded p-3 bg-background/30">
                         <dt className="text-muted-foreground font-semibold mb-2">Sui Blockchain Object</dt>
                         <dd className="text-foreground break-all font-mono text-xs mb-3 p-2 bg-background rounded">{publishedDataset.datasetId}</dd>
@@ -382,12 +934,14 @@ const Record = () => {
               </Card>
 
               {/* Upload to Marketplace */}
-              {recordedBlob && !isRecording && !publishedDataset && (
+              {recordedBlob && !isRecording && !publishedDataset && selectedLanguage && selectedDuration && (
                 <WalrusEncryptUpload
                   audioBlob={recordedBlob}
-                  language={selectedLanguage}
+                  language={selectedLanguage.name}
                   dialect={selectedDialect}
-                  duration={selectedDuration}
+                  duration={selectedDuration.label}
+                  durationId={selectedDuration.id}
+                  registryId={REGISTRY_ID}
                   onSuccess={handlePublishSuccess}
                 />
               )}

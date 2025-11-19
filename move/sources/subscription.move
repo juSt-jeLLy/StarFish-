@@ -1,18 +1,56 @@
-// Voice Data Marketplace with Dynamic Pricing
+// Voice Data Marketplace with Dynamic Pricing and On-Chain Categories
 module starfish::voice_marketplace;
 
 use std::string::String;
-use sui::{clock::Clock, coin::Coin, dynamic_field as df, sui::SUI, event};
+use sui::{clock::Clock, coin::Coin, dynamic_field as df, sui::SUI, event, vec_map::{Self, VecMap}};
 
 const EInvalidCap: u64 = 0;
 const EInvalidFee: u64 = 1;
 const ENoAccess: u64 = 2;
 const ECannotBuyOwnDataset: u64 = 3;
-const MARKER: u64 = 4;
+const ELanguageNotFound: u64 = 4;
+const EDialectNotFound: u64 = 5;
+const EDurationNotFound: u64 = 6;
+const ENotCategoryAdmin: u64 = 7;
+const ELanguageAlreadyExists: u64 = 8;
+const EDialectAlreadyExists: u64 = 9;
+const EDurationAlreadyExists: u64 = 10;
 
 // Base price: 0.001 SUI per day for 30 seconds = 1_000_000 MIST
 const BASE_PRICE_PER_DAY: u64 = 1_000_000;
 const MS_PER_DAY: u64 = 24 * 60 * 60 * 1000;
+
+/// Registry for all categories - SHARED object
+public struct CategoryRegistry has key {
+    id: UID,
+    admin: address,
+    languages: VecMap<String, LanguageCategory>,
+    existing_durations: VecMap<String, bool>, // Track duration labels to prevent duplicates
+}
+
+/// Language category with dialects
+public struct LanguageCategory has store {
+    name: String,
+    dialects: vector<DialectInfo>,
+    sample_texts: vector<String>,
+    created_by: address,
+    created_at: u64,
+}
+
+/// Dialect information
+public struct DialectInfo has store, copy, drop {
+    name: String,
+    description: String,
+}
+
+/// Duration option - SHARED object
+public struct DurationOption has key, store {
+    id: UID,
+    label: String,
+    seconds: u64,
+    created_by: address,
+    created_at: u64,
+}
 
 /// Walrus blob object to represent encrypted voice data stored on Walrus
 public struct WalrusBlob has key, store {
@@ -28,7 +66,8 @@ public struct VoiceDataset has key {
     creator: address,
     language: String,
     dialect: String,
-    duration_seconds: u64, // Store actual duration in seconds
+    duration_label: String,
+    duration_seconds: u64,
     blob_id: String,
     encryption_id: vector<u8>,
     created_at: u64,
@@ -40,14 +79,41 @@ public struct Subscription has key, store {
     dataset_id: ID,
     subscriber: address,
     created_at: u64,
-    expires_at: u64, // When the subscription expires
-    days_purchased: u64, // How many days were purchased
+    expires_at: u64,
+    days_purchased: u64,
 }
 
 /// Admin capability for dataset creator
 public struct DatasetCap has key, store {
     id: UID,
     dataset_id: ID,
+}
+
+/// Event emitted when category registry is created
+public struct CategoryRegistryCreated has copy, drop {
+    registry_id: ID,
+    admin: address,
+}
+
+/// Event emitted when language is added
+public struct LanguageAdded has copy, drop {
+    language: String,
+    created_by: address,
+}
+
+/// Event emitted when dialect is added
+public struct DialectAdded has copy, drop {
+    language: String,
+    dialect: String,
+    created_by: address,
+}
+
+/// Event emitted when duration option is created
+public struct DurationOptionCreated has copy, drop {
+    duration_id: ID,
+    label: String,
+    seconds: u64,
+    created_by: address,
 }
 
 /// Event emitted when dataset is created
@@ -70,54 +136,204 @@ public struct SubscriptionPurchased has copy, drop {
 }
 
 //////////////////////////////////////////
+// Category Management
+
+/// Initialize the category registry (called once on deployment)
+fun init(ctx: &mut TxContext) {
+    let registry = CategoryRegistry {
+        id: object::new(ctx),
+        admin: ctx.sender(),
+        languages: vec_map::empty(),
+        existing_durations: vec_map::empty(),
+    };
+    
+    event::emit(CategoryRegistryCreated {
+        registry_id: object::id(&registry),
+        admin: ctx.sender(),
+    });
+    
+    transfer::share_object(registry);
+}
+
+/// Add a new language category
+public fun add_language(
+    registry: &mut CategoryRegistry,
+    language_name: String,
+    sample_texts: vector<String>,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    // Check if language already exists
+    assert!(!vec_map::contains(&registry.languages, &language_name), ELanguageAlreadyExists);
+    
+    let language_category = LanguageCategory {
+        name: language_name,
+        dialects: vector::empty(),
+        sample_texts,
+        created_by: ctx.sender(),
+        created_at: c.timestamp_ms(),
+    };
+    
+    vec_map::insert(&mut registry.languages, language_name, language_category);
+    
+    event::emit(LanguageAdded {
+        language: language_name,
+        created_by: ctx.sender(),
+    });
+}
+
+entry fun add_language_entry(
+    registry: &mut CategoryRegistry,
+    language_name: String,
+    sample_texts: vector<String>,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    add_language(registry, language_name, sample_texts, c, ctx);
+}
+
+/// Add a dialect to an existing language
+public fun add_dialect(
+    registry: &mut CategoryRegistry,
+    language_name: String,
+    dialect_name: String,
+    dialect_description: String,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(vec_map::contains(&registry.languages, &language_name), ELanguageNotFound);
+    
+    let language = vec_map::get_mut(&mut registry.languages, &language_name);
+    
+    // Check if dialect already exists in this language
+    let mut i = 0;
+    while (i < vector::length(&language.dialects)) {
+        let existing_dialect = vector::borrow(&language.dialects, i);
+        assert!(existing_dialect.name != dialect_name, EDialectAlreadyExists);
+        i = i + 1;
+    };
+    
+    let dialect_info = DialectInfo {
+        name: dialect_name,
+        description: dialect_description,
+    };
+    
+    vector::push_back(&mut language.dialects, dialect_info);
+    
+    event::emit(DialectAdded {
+        language: language_name,
+        dialect: dialect_name,
+        created_by: ctx.sender(),
+    });
+}
+
+entry fun add_dialect_entry(
+    registry: &mut CategoryRegistry,
+    language_name: String,
+    dialect_name: String,
+    dialect_description: String,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    add_dialect(registry, language_name, dialect_name, dialect_description, c, ctx);
+}
+
+/// Create a new duration option
+public fun create_duration_option(
+    registry: &mut CategoryRegistry,
+    label: String,
+    seconds: u64,
+    c: &Clock,
+    ctx: &mut TxContext,
+): DurationOption {
+    // Check if duration label already exists
+    assert!(!vec_map::contains(&registry.existing_durations, &label), EDurationAlreadyExists);
+    
+    let duration = DurationOption {
+        id: object::new(ctx),
+        label,
+        seconds,
+        created_by: ctx.sender(),
+        created_at: c.timestamp_ms(),
+    };
+    
+    let duration_id = object::id(&duration);
+    
+    // Mark this duration label as existing
+    vec_map::insert(&mut registry.existing_durations, label, true);
+    
+    event::emit(DurationOptionCreated {
+        duration_id,
+        label,
+        seconds,
+        created_by: ctx.sender(),
+    });
+    
+    duration
+}
+
+entry fun create_duration_option_entry(
+    registry: &mut CategoryRegistry,
+    label: String,
+    seconds: u64,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    let duration = create_duration_option(registry, label, seconds, c, ctx);
+    transfer::share_object(duration);
+}
+
+//////////////////////////////////////////
 // Pricing Logic
 
 /// Calculate price based on duration and days
 /// Formula: (duration_seconds / 30) * BASE_PRICE_PER_DAY * days
 public fun calculate_price(duration_seconds: u64, days: u64): u64 {
-    let duration_multiplier = duration_seconds / 30; // 30 sec = 1x, 60 sec = 2x, etc.
+    let duration_multiplier = duration_seconds / 30;
     BASE_PRICE_PER_DAY * duration_multiplier * days
-}
-
-/// Helper to parse duration string to seconds
-public fun parse_duration_to_seconds(duration: &String): u64 {
-    // Expected formats: "30 seconds", "1 minute", "2 minutes", "5 minutes"
-    if (duration == &std::string::utf8(b"30 seconds")) {
-        30
-    } else if (duration == &std::string::utf8(b"1 minute")) {
-        60
-    } else if (duration == &std::string::utf8(b"2 minutes")) {
-        120
-    } else if (duration == &std::string::utf8(b"5 minutes")) {
-        300
-    } else {
-        30 // Default to 30 seconds
-    }
 }
 
 //////////////////////////////////////////
 // Dataset Management
 
-/// Create a new voice dataset
+/// Create a new voice dataset with validated categories
 public fun create_dataset(
+    registry: &CategoryRegistry,
     language: String,
     dialect: String,
-    duration: String,
+    duration: &DurationOption,
     blob_id: String,
     encryption_id: vector<u8>,
     c: &Clock,
     ctx: &mut TxContext,
 ): DatasetCap {
+    // Validate language exists
+    assert!(vec_map::contains(&registry.languages, &language), ELanguageNotFound);
+    
+    // Validate dialect exists for this language
+    let language_cat = vec_map::get(&registry.languages, &language);
+    let mut dialect_found = false;
+    let mut i = 0;
+    while (i < vector::length(&language_cat.dialects)) {
+        let d = vector::borrow(&language_cat.dialects, i);
+        if (d.name == dialect) {
+            dialect_found = true;
+            break
+        };
+        i = i + 1;
+    };
+    assert!(dialect_found, EDialectNotFound);
+    
     let dataset_timestamp = c.timestamp_ms();
     let creator = ctx.sender();
-    let duration_seconds = parse_duration_to_seconds(&duration);
     
     let dataset = VoiceDataset {
         id: object::new(ctx),
         creator,
         language,
         dialect,
-        duration_seconds,
+        duration_label: duration.label,
+        duration_seconds: duration.seconds,
         blob_id,
         encryption_id,
         created_at: dataset_timestamp,
@@ -130,7 +346,7 @@ public fun create_dataset(
         creator,
         language: dataset.language,
         dialect: dataset.dialect,
-        duration_seconds,
+        duration_seconds: duration.seconds,
     });
     
     let cap = DatasetCap {
@@ -143,15 +359,16 @@ public fun create_dataset(
 }
 
 entry fun create_dataset_entry(
+    registry: &CategoryRegistry,
     language: String,
     dialect: String,
-    duration: String,
+    duration: &DurationOption,
     blob_id: String,
     encryption_id: vector<u8>,
     c: &Clock,
     ctx: &mut TxContext,
 ) {
-    let cap = create_dataset(language, dialect, duration, blob_id, encryption_id, c, ctx);
+    let cap = create_dataset(registry, language, dialect, duration, blob_id, encryption_id, c, ctx);
     transfer::transfer(cap, ctx.sender());
 }
 
@@ -248,7 +465,6 @@ fun approve_internal(
         return false
     };
     
-    // Check if subscription has expired
     if (c.timestamp_ms() > sub.expires_at) {
         return false
     };
@@ -301,6 +517,25 @@ public fun get_subscription_expiry(sub: &Subscription): u64 {
 
 public fun is_subscription_active(sub: &Subscription, c: &Clock): bool {
     c.timestamp_ms() <= sub.expires_at
+}
+
+public fun get_language_sample_texts(registry: &CategoryRegistry, language: &String): vector<String> {
+    assert!(vec_map::contains(&registry.languages, language), ELanguageNotFound);
+    let lang_cat = vec_map::get(&registry.languages, language);
+    lang_cat.sample_texts
+}
+
+public fun get_duration_seconds(duration: &DurationOption): u64 {
+    duration.seconds
+}
+
+public fun get_duration_label(duration: &DurationOption): String {
+    duration.label
+}
+
+#[test_only]
+public fun init_for_testing(ctx: &mut TxContext) {
+    init(ctx);
 }
 
 #[test_only]
