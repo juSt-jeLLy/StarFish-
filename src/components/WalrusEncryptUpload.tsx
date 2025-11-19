@@ -24,7 +24,7 @@ type DatasetInfo = {
   txDigest: string;
 };
 
-const PACKAGE_ID = "0xf86206244bb9118fadcc036033c49332c53cd8d8c78dffcdd50518c2fe98ba99";
+const PACKAGE_ID = "0xdba1cefdc7b447096f988418a8b72f9e9b76dc5013408cde7c97f6543fe32de2";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
@@ -226,7 +226,16 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
             },
             onError: (error: any) => {
               console.error('✗ Create dataset error:', error);
-              reject(error);
+              const errorMsg = error?.message || 'Unknown error';
+              
+              // Handle specific contract errors with user-friendly messages
+              if (errorMsg.includes('ELanguageNotFound') || errorMsg.includes('4')) {
+                reject(new Error(`Language "${language}" not found. Please add it first.`));
+              } else if (errorMsg.includes('EDialectNotFound') || errorMsg.includes('5')) {
+                reject(new Error(`Dialect "${dialect}" not found for ${language}. Please add it first.`));
+              } else {
+                reject(error);
+              }
             },
           }
         );
@@ -380,4 +389,4 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
   );
 };
 
-export default WalrusEncryptUpload;
+export default WalrusEncryptUpload

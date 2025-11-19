@@ -8,8 +8,8 @@ import spaceBg from "@/assets/space-bg.jpg";
 import { Transaction } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0xf86206244bb9118fadcc036033c49332c53cd8d8c78dffcdd50518c2fe98ba99";
-const REGISTRY_ID = "0x41286eecd6dc445a5a0e7b83d59eac3a408128b56aabeff5dbc53cbe51863fde"; // Replace after deployment
+const PACKAGE_ID = "0xdba1cefdc7b447096f988418a8b72f9e9b76dc5013408cde7c97f6543fe32de2";
+const REGISTRY_ID = "0x17dc1cdfeca8053b80e31a0b69ab38a71e3dab195e87aa00229d931d59391aed"; // Replace after deployment
 const BASE_PRICE_PER_DAY = 1_000_000; // 0.001 SUI in MIST
 
 interface DatasetData {

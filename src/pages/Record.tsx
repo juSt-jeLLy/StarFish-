@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Mic, Square, Languages, Clock, Download, CheckCircle, Loader2, Plus, Settings } from "lucide-react";
+import { Mic, Square, Languages, Clock, Download, CheckCircle, Loader2, Plus, X } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import WaveformVisualizer from "@/components/WaveformVisualizer";
 import { WalrusEncryptUpload } from "@/components/WalrusEncryptUpload";
@@ -14,8 +14,8 @@ import { AudioRecorder, downloadAudio } from "@/utils/audioRecorder";
 import { toast } from "sonner";
 import spaceBg from "@/assets/space-bg.jpg";
 
-const PACKAGE_ID = "0xf86206244bb9118fadcc036033c49332c53cd8d8c78dffcdd50518c2fe98ba99";
-const REGISTRY_ID = "0x41286eecd6dc445a5a0e7b83d59eac3a408128b56aabeff5dbc53cbe51863fde"; // Replace after deployment
+const PACKAGE_ID = "0xdba1cefdc7b447096f988418a8b72f9e9b76dc5013408cde7c97f6543fe32de2";
+const REGISTRY_ID = "0x17dc1cdfeca8053b80e31a0b69ab38a71e3dab195e87aa00229d931d59391aed";
 
 interface LanguageData {
   name: string;
@@ -40,11 +40,10 @@ const Record = () => {
   const suiClient = useSuiClient();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
   
-  // Category Management State
-  const [showCategoryManagement, setShowCategoryManagement] = useState(false);
-  const [showAddLanguage, setShowAddLanguage] = useState(false);
-  const [showAddDialect, setShowAddDialect] = useState(false);
-  const [showAddDuration, setShowAddDuration] = useState(false);
+  // Form state
+  const [showAddLanguageForm, setShowAddLanguageForm] = useState(false);
+  const [showAddDialectForm, setShowAddDialectForm] = useState(false);
+  const [showAddDurationForm, setShowAddDurationForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Language form
@@ -52,7 +51,6 @@ const Record = () => {
   const [sampleTexts, setSampleTexts] = useState("");
   
   // Dialect form
-  const [dialectLanguage, setDialectLanguage] = useState("");
   const [dialectName, setDialectName] = useState("");
   const [dialectDescription, setDialectDescription] = useState("");
   
@@ -65,10 +63,12 @@ const Record = () => {
   const [durations, setDurations] = useState<DurationData[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Recording State
+  // Selection State
   const [selectedLanguage, setSelectedLanguage] = useState<LanguageData | null>(null);
   const [selectedDialect, setSelectedDialect] = useState("");
   const [selectedDuration, setSelectedDuration] = useState<DurationData | null>(null);
+  
+  // Recording State
   const [currentText, setCurrentText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [audioRecorder, setAudioRecorder] = useState<AudioRecorder | null>(null);
@@ -83,7 +83,6 @@ const Record = () => {
   const loadCategoriesAndDurations = async () => {
     setLoading(true);
     try {
-      // Load registry
       const registry = await suiClient.getObject({
         id: REGISTRY_ID,
         options: { showContent: true },
@@ -113,7 +112,6 @@ const Record = () => {
         setLanguages(loadedLanguages);
       }
 
-      // Load duration options
       const durationsResult = await suiClient.queryEvents({
         query: {
           MoveEventType: `${PACKAGE_ID}::voice_marketplace::DurationOptionCreated`,
@@ -151,7 +149,6 @@ const Record = () => {
     }
   };
 
-  // Category Management Functions
   const handleAddLanguage = async () => {
     if (!currentAccount?.address || !languageName.trim() || !sampleTexts.trim()) {
       toast.error("Please fill all fields");
@@ -161,12 +158,26 @@ const Record = () => {
     setIsSubmitting(true);
     try {
       const tx = new Transaction();
-      tx.setGasBudget(10000000);
       
+      // Split by double newlines to treat paragraphs as separate texts
       const textsArray = sampleTexts
-        .split('\n')
+        .split(/\n\n+/)  // Split on 2 or more newlines (paragraph breaks)
         .map(t => t.trim())
         .filter(t => t.length > 0);
+      
+      if (textsArray.length === 0) {
+        toast.error("Please add at least one sample text paragraph");
+        setIsSubmitting(false);
+        return;
+      }
+      
+      // Calculate estimated data size and set appropriate gas budget
+      const totalTextLength = textsArray.reduce((sum, text) => sum + text.length, 0);
+      // Base gas + additional gas based on text size (roughly 100k MIST per 1KB of text)
+      const estimatedGas = Math.max(20_000_000, 10_000_000 + Math.ceil(totalTextLength / 1000) * 100_000);
+      tx.setGasBudget(estimatedGas);
+      
+      console.log(`Setting gas budget to ${estimatedGas} MIST for ${textsArray.length} texts totaling ${totalTextLength} characters`);
       
       tx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::add_language_entry`,
@@ -182,14 +193,21 @@ const Record = () => {
         { transaction: tx },
         {
           onSuccess: () => {
-            toast.success(`Language "${languageName}" added successfully!`);
+            toast.success(`Language "${languageName}" added with ${textsArray.length} sample text(s)!`);
             setLanguageName("");
             setSampleTexts("");
-            setShowAddLanguage(false);
+            setShowAddLanguageForm(false);
             loadCategoriesAndDurations();
           },
           onError: (error: any) => {
-            toast.error("Failed to add language: " + (error?.message || 'Unknown error'));
+            const errorMsg = error?.message || 'Unknown error';
+            if (errorMsg.includes('ELanguageAlreadyExists') || errorMsg.includes('8')) {
+              toast.error(`Language "${languageName}" already exists!`);
+            } else if (errorMsg.includes('InsufficientGas')) {
+              toast.error("Insufficient gas. Try reducing the length of your sample texts or add more SUI to your wallet.");
+            } else {
+              toast.error("Failed to add language: " + errorMsg);
+            }
           },
         }
       );
@@ -201,7 +219,7 @@ const Record = () => {
   };
 
   const handleAddDialect = async () => {
-    if (!currentAccount?.address || !dialectLanguage.trim() || !dialectName.trim()) {
+    if (!currentAccount?.address || !selectedLanguage || !dialectName.trim()) {
       toast.error("Please fill all required fields");
       return;
     }
@@ -215,7 +233,7 @@ const Record = () => {
         target: `${PACKAGE_ID}::voice_marketplace::add_dialect_entry`,
         arguments: [
           tx.object(REGISTRY_ID),
-          tx.pure.string(dialectLanguage.trim()),
+          tx.pure.string(selectedLanguage.name),
           tx.pure.string(dialectName.trim()),
           tx.pure.string(dialectDescription.trim() || ""),
           tx.object('0x6'),
@@ -226,15 +244,22 @@ const Record = () => {
         { transaction: tx },
         {
           onSuccess: () => {
-            toast.success(`Dialect "${dialectName}" added to ${dialectLanguage}!`);
-            setDialectLanguage("");
+            toast.success(`Dialect "${dialectName}" added to ${selectedLanguage.name}!`);
             setDialectName("");
             setDialectDescription("");
-            setShowAddDialect(false);
+            setShowAddDialectForm(false);
             loadCategoriesAndDurations();
+            // Refresh selected language
+            const updatedLang = languages.find(l => l.name === selectedLanguage.name);
+            if (updatedLang) setSelectedLanguage(updatedLang);
           },
           onError: (error: any) => {
-            toast.error("Failed to add dialect: " + (error?.message || 'Unknown error'));
+            const errorMsg = error?.message || 'Unknown error';
+            if (errorMsg.includes('EDialectAlreadyExists') || errorMsg.includes('9')) {
+              toast.error(`Dialect "${dialectName}" already exists for ${selectedLanguage.name}!`);
+            } else {
+              toast.error("Failed to add dialect: " + errorMsg);
+            }
           },
         }
       );
@@ -265,6 +290,7 @@ const Record = () => {
       tx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::create_duration_option_entry`,
         arguments: [
+          tx.object(REGISTRY_ID),
           tx.pure.string(durationLabel.trim()),
           tx.pure.u64(seconds),
           tx.object('0x6'),
@@ -278,11 +304,16 @@ const Record = () => {
             toast.success(`Duration option "${durationLabel}" created!`);
             setDurationLabel("");
             setDurationSeconds("");
-            setShowAddDuration(false);
+            setShowAddDurationForm(false);
             loadCategoriesAndDurations();
           },
           onError: (error: any) => {
-            toast.error("Failed to create duration: " + (error?.message || 'Unknown error'));
+            const errorMsg = error?.message || 'Unknown error';
+            if (errorMsg.includes('EDurationAlreadyExists') || errorMsg.includes('10')) {
+              toast.error(`Duration "${durationLabel}" already exists!`);
+            } else {
+              toast.error("Failed to create duration: " + errorMsg);
+            }
           },
         }
       );
@@ -293,10 +324,10 @@ const Record = () => {
     }
   };
 
-  // Recording Functions
   const handleLanguageSelect = (language: LanguageData) => {
     setSelectedLanguage(language);
     setSelectedDialect("");
+    setSelectedDuration(null);
     setCurrentText("");
     setRecordedBlob(null);
     setPublishedDataset(null);
@@ -304,6 +335,8 @@ const Record = () => {
 
   const handleDialectSelect = (dialect: string) => {
     setSelectedDialect(dialect);
+    setSelectedDuration(null);
+    setCurrentText("");
     setRecordedBlob(null);
     setPublishedDataset(null);
   };
@@ -364,7 +397,9 @@ const Record = () => {
     toast.success("Dataset published to marketplace!");
   };
 
-  const handleNewRecording = () => {
+  const resetToLanguages = () => {
+    setSelectedLanguage(null);
+    setSelectedDialect("");
     setSelectedDuration(null);
     setCurrentText("");
     setRecordedBlob(null);
@@ -397,76 +432,107 @@ const Record = () => {
 
       <div className="relative z-20 pt-24 pb-12 px-4">
         <div className="container mx-auto max-w-6xl">
-          <div className="flex justify-between items-center mb-8">
-            <h1 className="text-4xl md:text-6xl font-bold neon-text glitch">
-              RECORD YOUR VOICE
-            </h1>
-            <Button
-              onClick={() => setShowCategoryManagement(!showCategoryManagement)}
-              className="bg-gradient-to-r from-primary to-secondary text-background font-bold pixel-border"
-            >
-              <Settings className="w-5 h-5 mr-2" />
-              {showCategoryManagement ? "Hide" : "Manage"} Categories
-            </Button>
-          </div>
+          <h1 className="text-4xl md:text-6xl font-bold neon-text glitch text-center mb-12">
+            RECORD YOUR VOICE
+          </h1>
 
-          {/* Category Management Section */}
-          {showCategoryManagement && (
-            <div className="mb-8 space-y-4 animate-slide-in">
-              <Card className="p-6 neon-border bg-card/80 backdrop-blur">
-                <h3 className="text-2xl font-bold text-primary mb-4">Category Management</h3>
-                <p className="text-sm text-muted-foreground mb-6">
-                  Add new languages, dialects, and duration options to expand the marketplace
-                </p>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Breadcrumb Navigation */}
+          {(selectedLanguage || selectedDialect || selectedDuration) && (
+            <div className="mb-8 flex items-center gap-2 text-sm">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={resetToLanguages}
+                className="text-primary hover:text-primary/80"
+              >
+                Languages
+              </Button>
+              {selectedLanguage && (
+                <>
+                  <span className="text-muted-foreground">/</span>
                   <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => {
-                      setShowAddLanguage(!showAddLanguage);
-                      setShowAddDialect(false);
-                      setShowAddDuration(false);
+                      setSelectedDialect("");
+                      setSelectedDuration(null);
+                      setCurrentText("");
+                      setRecordedBlob(null);
+                      setPublishedDataset(null);
                     }}
+                    className="text-secondary hover:text-secondary/80"
+                  >
+                    {selectedLanguage.name}
+                  </Button>
+                </>
+              )}
+              {selectedDialect && (
+                <>
+                  <span className="text-muted-foreground">/</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedDuration(null);
+                      setCurrentText("");
+                      setRecordedBlob(null);
+                      setPublishedDataset(null);
+                    }}
+                    className="text-accent hover:text-accent/80"
+                  >
+                    {selectedDialect}
+                  </Button>
+                </>
+              )}
+              {selectedDuration && (
+                <>
+                  <span className="text-muted-foreground">/</span>
+                  <span className="text-foreground font-semibold">{selectedDuration.label}</span>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* LEVEL 1: Language Selection */}
+          {!selectedLanguage && (
+            <div className="animate-slide-in space-y-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-primary flex items-center gap-2">
+                  <Languages className="w-8 h-8" />
+                  SELECT LANGUAGE
+                </h2>
+                {!showAddLanguageForm && (
+                  <Button
+                    onClick={() => setShowAddLanguageForm(true)}
                     className="bg-primary hover:bg-primary/90 font-bold"
                   >
-                    <Languages className="w-5 h-5 mr-2" />
+                    <Plus className="w-5 h-5 mr-2" />
                     Add Language
                   </Button>
-                  
-                  <Button
-                    onClick={() => {
-                      setShowAddDialect(!showAddDialect);
-                      setShowAddLanguage(false);
-                      setShowAddDuration(false);
-                    }}
-                    className="bg-secondary hover:bg-secondary/90 font-bold"
-                  >
-                    <Plus className="w-5 h-5 mr-2" />
-                    Add Dialect
-                  </Button>
-                  
-                  <Button
-                    onClick={() => {
-                      setShowAddDuration(!showAddDuration);
-                      setShowAddLanguage(false);
-                      setShowAddDialect(false);
-                    }}
-                    className="bg-accent hover:bg-accent/90 font-bold"
-                  >
-                    <Clock className="w-5 h-5 mr-2" />
-                    Add Duration
-                  </Button>
-                </div>
-              </Card>
+                )}
+              </div>
 
               {/* Add Language Form */}
-              {showAddLanguage && (
-                <Card className="p-6 neon-border bg-card/80 backdrop-blur animate-slide-in">
-                  <h4 className="text-xl font-bold text-primary mb-4">Add New Language</h4>
+              {showAddLanguageForm && (
+                <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-xl font-bold text-primary">Add New Language</h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddLanguageForm(false);
+                        setLanguageName("");
+                        setSampleTexts("");
+                      }}
+                    >
+                      <X className="w-5 h-5" />
+                    </Button>
+                  </div>
                   <div className="space-y-4">
                     <div>
-                      <Label htmlFor="language-name" className="text-foreground font-semibold">Language Name</Label>
+                      <Label className="text-foreground font-semibold">Language Name</Label>
                       <Input
-                        id="language-name"
                         value={languageName}
                         onChange={(e) => setLanguageName(e.target.value)}
                         placeholder="e.g., English, Spanish, Mandarin"
@@ -475,194 +541,55 @@ const Record = () => {
                     </div>
                     
                     <div>
-                      <Label htmlFor="sample-texts" className="text-foreground font-semibold">Sample Texts (one per line)</Label>
+                      <Label className="text-foreground font-semibold">Sample Texts (separate paragraphs with blank lines)</Label>
                       <Textarea
-                        id="sample-texts"
                         value={sampleTexts}
                         onChange={(e) => setSampleTexts(e.target.value)}
-                        placeholder="Enter sample texts, one per line..."
-                        rows={6}
-                        className="mt-2"
+                        placeholder="Enter first paragraph here...
+
+Press Enter twice (blank line) to separate paragraphs.
+
+Each paragraph will be a separate sample text for recording."
+                        rows={12}
+                        className="mt-2 font-mono text-sm"
                       />
+                      <div className="flex justify-between items-start mt-2">
+                        <p className="text-xs text-muted-foreground">
+                          💡 <strong>Add at least 3 paragraphs</strong> - Separate each paragraph with a blank line (press Enter twice).
+                        </p>
+                        <p className="text-xs text-primary font-semibold whitespace-nowrap ml-2">
+                          {sampleTexts.split(/\n\n+/).filter(t => t.trim().length > 0).length} paragraph(s)
+                        </p>
+                      </div>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Add at least 3 sample texts for speakers to read
+                        ⚠️ <strong>Note:</strong> Longer texts require more gas. Each paragraph can be 1-3 sentences for optimal gas costs.
                       </p>
                     </div>
                     
-                    <div className="flex gap-3">
-                      <Button
-                        onClick={() => setShowAddLanguage(false)}
-                        variant="outline"
-                        disabled={isSubmitting}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={handleAddLanguage}
-                        disabled={isSubmitting}
-                        className="bg-primary hover:bg-primary/90"
-                      >
-                        {isSubmitting ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Adding...
-                          </>
-                        ) : (
-                          'Add Language'
-                        )}
-                      </Button>
-                    </div>
+                    <Button
+                      onClick={handleAddLanguage}
+                      disabled={isSubmitting}
+                      className="bg-primary hover:bg-primary/90 w-full"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Adding...
+                        </>
+                      ) : (
+                        'Add Language'
+                      )}
+                    </Button>
                   </div>
                 </Card>
               )}
 
-              {/* Add Dialect Form */}
-              {showAddDialect && (
-                <Card className="p-6 neon-border bg-card/80 backdrop-blur animate-slide-in">
-                  <h4 className="text-xl font-bold text-secondary mb-4">Add New Dialect</h4>
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="dialect-language" className="text-foreground font-semibold">Language</Label>
-                      <Input
-                        id="dialect-language"
-                        value={dialectLanguage}
-                        onChange={(e) => setDialectLanguage(e.target.value)}
-                        placeholder="e.g., English"
-                        className="mt-2"
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Must match an existing language name exactly
-                      </p>
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="dialect-name" className="text-foreground font-semibold">Dialect Name</Label>
-                      <Input
-                        id="dialect-name"
-                        value={dialectName}
-                        onChange={(e) => setDialectName(e.target.value)}
-                        placeholder="e.g., American, British"
-                        className="mt-2"
-                      />
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="dialect-description" className="text-foreground font-semibold">Description (optional)</Label>
-                      <Input
-                        id="dialect-description"
-                        value={dialectDescription}
-                        onChange={(e) => setDialectDescription(e.target.value)}
-                        placeholder="Brief description of this dialect"
-                        className="mt-2"
-                      />
-                    </div>
-                    
-                    <div className="flex gap-3">
-                      <Button
-                        onClick={() => setShowAddDialect(false)}
-                        variant="outline"
-                        disabled={isSubmitting}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={handleAddDialect}
-                        disabled={isSubmitting}
-                        className="bg-secondary hover:bg-secondary/90"
-                      >
-                        {isSubmitting ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Adding...
-                          </>
-                        ) : (
-                          'Add Dialect'
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              )}
-
-              {/* Add Duration Form */}
-              {showAddDuration && (
-                <Card className="p-6 neon-border bg-card/80 backdrop-blur animate-slide-in">
-                  <h4 className="text-xl font-bold text-accent mb-4">Add New Duration Option</h4>
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="duration-label" className="text-foreground font-semibold">Duration Label</Label>
-                      <Input
-                        id="duration-label"
-                        value={durationLabel}
-                        onChange={(e) => setDurationLabel(e.target.value)}
-                        placeholder="e.g., 30 seconds, 1 minute, 5 minutes"
-                        className="mt-2"
-                      />
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="duration-seconds" className="text-foreground font-semibold">Duration in Seconds</Label>
-                      <Input
-                        id="duration-seconds"
-                        type="number"
-                        value={durationSeconds}
-                        onChange={(e) => setDurationSeconds(e.target.value)}
-                        placeholder="e.g., 30, 60, 300"
-                        className="mt-2"
-                      />
-                    </div>
-                    
-                    <div className="flex gap-3">
-                      <Button
-                        onClick={() => setShowAddDuration(false)}
-                        variant="outline"
-                        disabled={isSubmitting}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={handleAddDuration}
-                        disabled={isSubmitting}
-                        className="bg-accent hover:bg-accent/90"
-                      >
-                        {isSubmitting ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Creating...
-                          </>
-                        ) : (
-                          'Create Duration'
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              )}
-            </div>
-          )}
-
-          {/* Language Selection */}
-          {!selectedLanguage && (
-            <div className="mb-12 animate-slide-in">
-              <h2 className="text-2xl font-bold mb-6 text-primary flex items-center justify-center gap-2">
-                <Languages className="w-8 h-8" />
-                SELECT LANGUAGE
-              </h2>
+              {/* Language Grid */}
               {languages.length === 0 ? (
                 <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
                   <p className="text-muted-foreground mb-4">
-                    No languages available. Add one using Category Management.
+                    No languages available. Add your first language above.
                   </p>
-                  <Button
-                    onClick={() => {
-                      setShowCategoryManagement(true);
-                      setShowAddLanguage(true);
-                    }}
-                    className="bg-primary hover:bg-primary/90"
-                  >
-                    <Plus className="w-5 h-5 mr-2" />
-                    Add First Language
-                  </Button>
                 </Card>
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -683,36 +610,88 @@ const Record = () => {
             </div>
           )}
 
-          {/* Dialect Selection */}
+          {/* LEVEL 2: Dialect Selection */}
           {selectedLanguage && !selectedDialect && (
-            <div className="mb-12 animate-slide-in">
-              <Button
-                variant="ghost"
-                onClick={() => setSelectedLanguage(null)}
-                className="mb-4 text-secondary hover:text-secondary/80"
-              >
-                ← BACK TO LANGUAGES
-              </Button>
-              <h2 className="text-2xl font-bold mb-6 text-primary flex items-center justify-center gap-2">
-                SELECT DIALECT FOR {selectedLanguage.name.toUpperCase()}
-              </h2>
-              {selectedLanguage.dialects.length === 0 ? (
-                <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
-                  <p className="text-muted-foreground mb-4">
-                    No dialects available for {selectedLanguage.name}. Add one using Category Management.
-                  </p>
+            <div className="animate-slide-in space-y-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-secondary">
+                  SELECT DIALECT FOR {selectedLanguage.name.toUpperCase()}
+                </h2>
+                {!showAddDialectForm && (
                   <Button
-                    onClick={() => {
-                      setShowCategoryManagement(true);
-                      setShowAddDialect(true);
-                      setDialectLanguage(selectedLanguage.name);
-                      setSelectedLanguage(null);
-                    }}
-                    className="bg-primary hover:bg-primary/90"
+                    onClick={() => setShowAddDialectForm(true)}
+                    className="bg-secondary hover:bg-secondary/90 font-bold"
                   >
                     <Plus className="w-5 h-5 mr-2" />
                     Add Dialect
                   </Button>
+                )}
+              </div>
+
+              {/* Add Dialect Form */}
+              {showAddDialectForm && (
+                <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-xl font-bold text-secondary">
+                      Add Dialect to {selectedLanguage.name}
+                    </h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddDialectForm(false);
+                        setDialectName("");
+                        setDialectDescription("");
+                      }}
+                    >
+                      <X className="w-5 h-5" />
+                    </Button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <Label className="text-foreground font-semibold">Dialect Name</Label>
+                      <Input
+                        value={dialectName}
+                        onChange={(e) => setDialectName(e.target.value)}
+                        placeholder="e.g., American, British, Australian"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label className="text-foreground font-semibold">Description (optional)</Label>
+                      <Input
+                        value={dialectDescription}
+                        onChange={(e) => setDialectDescription(e.target.value)}
+                        placeholder="Brief description of this dialect"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <Button
+                      onClick={handleAddDialect}
+                      disabled={isSubmitting}
+                      className="bg-secondary hover:bg-secondary/90 w-full"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Adding...
+                        </>
+                      ) : (
+                        'Add Dialect'
+                      )}
+                    </Button>
+                  </div>
+                </Card>
+              )}
+
+              {/* Dialect Grid */}
+              {selectedLanguage.dialects.length === 0 ? (
+                <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
+                  <p className="text-muted-foreground mb-4">
+                    No dialects available for {selectedLanguage.name}. Add one above.
+                  </p>
                 </Card>
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -735,36 +714,90 @@ const Record = () => {
             </div>
           )}
 
-          {/* Duration Selection */}
+          {/* LEVEL 3: Duration Selection */}
           {selectedDialect && !selectedDuration && (
-            <div className="mb-12 animate-slide-in">
-              <Button
-                variant="ghost"
-                onClick={() => setSelectedDialect("")}
-                className="mb-4 text-secondary hover:text-secondary/80"
-              >
-                ← BACK TO DIALECTS
-              </Button>
-              <h2 className="text-2xl font-bold mb-6 text-primary flex items-center justify-center gap-2">
-                <Clock className="w-8 h-8" />
-                SELECT DURATION
-              </h2>
+            <div className="animate-slide-in space-y-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-accent flex items-center gap-2">
+                  <Clock className="w-8 h-8" />
+                  SELECT DURATION
+                </h2>
+                {!showAddDurationForm && (
+                  <Button
+                    onClick={() => setShowAddDurationForm(true)}
+                    className="bg-accent hover:bg-accent/90 font-bold"
+                  >
+                    <Plus className="w-5 h-5 mr-2" />
+                    Add Duration
+                  </Button>
+                )}
+              </div>
+
+              {/* Add Duration Form */}
+              {showAddDurationForm && (
+                <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-xl font-bold text-accent">
+                      Add Duration for {selectedLanguage?.name} - {selectedDialect}
+                    </h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddDurationForm(false);
+                        setDurationLabel("");
+                        setDurationSeconds("");
+                      }}
+                    >
+                      <X className="w-5 h-5" />
+                    </Button>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <Label className="text-foreground font-semibold">Duration Label</Label>
+                      <Input
+                        value={durationLabel}
+                        onChange={(e) => setDurationLabel(e.target.value)}
+                        placeholder="e.g., 30 seconds, 1 minute, 5 minutes"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label className="text-foreground font-semibold">Duration in Seconds</Label>
+                      <Input
+                        type="number"
+                        value={durationSeconds}
+                        onChange={(e) => setDurationSeconds(e.target.value)}
+                        placeholder="e.g., 30, 60, 300"
+                        className="mt-2"
+                      />
+                    </div>
+                    
+                    <Button
+                      onClick={handleAddDuration}
+                      disabled={isSubmitting}
+                      className="bg-accent hover:bg-accent/90 w-full"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        'Create Duration'
+                      )}
+                    </Button>
+                  </div>
+                </Card>
+              )}
+
+              {/* Duration Grid */}
               {durations.length === 0 ? (
                 <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
                   <p className="text-muted-foreground mb-4">
-                    No duration options available. Add one using Category Management.
+                    No duration options available. Add one above.
                   </p>
-                  <Button
-                    onClick={() => {
-                      setShowCategoryManagement(true);
-                      setShowAddDuration(true);
-                      setSelectedDialect("");
-                    }}
-                    className="bg-primary hover:bg-primary/90"
-                  >
-                    <Plus className="w-5 h-5 mr-2" />
-                    Add Duration Option
-                  </Button>
                 </Card>
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -785,17 +818,9 @@ const Record = () => {
             </div>
           )}
 
-          {/* Recording Interface */}
+          {/* LEVEL 4: Recording Interface */}
           {currentText && selectedDuration && (
             <div className="animate-slide-in space-y-6">
-              <Button
-                variant="ghost"
-                onClick={handleNewRecording}
-                className="mb-4 text-secondary hover:text-secondary/80"
-              >
-                ← START NEW RECORDING
-              </Button>
-              
               <Card className="p-8 neon-border bg-card/80 backdrop-blur">
                 <div className="mb-6">
                   <p className="text-sm text-muted-foreground mb-2 text-center">
