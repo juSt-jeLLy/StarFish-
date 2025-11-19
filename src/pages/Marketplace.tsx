@@ -350,10 +350,7 @@ const Marketplace = () => {
           <h1 className="text-4xl md:text-6xl font-bold text-center mb-8 neon-text glitch">
             VOICE MARKETPLACE
           </h1>
-
-          {/* Creator Discount Banner */}
-        
-
+      
           {/* Advanced Filters */}
           <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-8">
             <div className="space-y-4">
