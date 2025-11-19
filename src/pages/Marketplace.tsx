@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Database, Languages, ShoppingCart, Loader2, Filter, Clock, Info } from "lucide-react";
+import { Database, Languages, ShoppingCart, Loader2, Filter, Clock, Info, X } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import spaceBg from "@/assets/space-bg.jpg";
 import { Transaction } from "@mysten/sui/transactions";
@@ -40,7 +40,9 @@ const Marketplace = () => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [myDatasets, setMyDatasets] = useState<Set<string>>(new Set());
   const [mySubscriptions, setMySubscriptions] = useState<Set<string>>(new Set());
-  const [selectedDays, setSelectedDays] = useState<{ [key: string]: number }>({});
+  const [selectedDataset, setSelectedDataset] = useState<DatasetData | null>(null);
+  const [showPurchaseModal, setShowPurchaseModal] = useState(false);
+  const [selectedDays, setSelectedDays] = useState<number>(7);
 
   useEffect(() => {
     loadMarketplace();
@@ -114,15 +116,6 @@ const Marketplace = () => {
       const validDatasets = datasetsData.filter(Boolean) as DatasetData[];
       setDatasets(validDatasets);
 
-      // Initialize default days (7 days) for each dataset
-      const defaultDays: { [key: string]: number } = {};
-      validDatasets.forEach(d => {
-        if (!selectedDays[d.id]) {
-          defaultDays[d.id] = 7;
-        }
-      });
-      setSelectedDays(prev => ({ ...defaultDays, ...prev }));
-
       if (currentAccount?.address) {
         const myDatasetIds = new Set(
           validDatasets
@@ -154,26 +147,39 @@ const Marketplace = () => {
     }
   };
 
-  const handlePurchase = async (dataset: DatasetData) => {
-    if (!currentAccount?.address) {
+  const openPurchaseModal = (dataset: DatasetData) => {
+    setSelectedDataset(dataset);
+    setSelectedDays(7);
+    setShowPurchaseModal(true);
+  };
+
+  const closePurchaseModal = () => {
+    setShowPurchaseModal(false);
+    setSelectedDataset(null);
+    setSelectedDays(7);
+  };
+
+  const handlePurchase = async () => {
+    if (!currentAccount?.address || !selectedDataset) {
       toast.error("Please connect your wallet");
       return;
     }
 
-    if (dataset.creator === currentAccount.address) {
+    if (selectedDataset.creator === currentAccount.address) {
       toast.error("You cannot purchase your own dataset");
+      closePurchaseModal();
       return;
     }
 
-    if (mySubscriptions.has(dataset.id)) {
+    if (mySubscriptions.has(selectedDataset.id)) {
       toast.info("You already own this dataset");
+      closePurchaseModal();
       return;
     }
 
-    const days = selectedDays[dataset.id] || 7;
-    const price = calculatePrice(dataset.durationSeconds, days);
+    const price = calculatePrice(selectedDataset.durationSeconds, selectedDays);
 
-    setPurchasing(dataset.id);
+    setPurchasing(selectedDataset.id);
 
     try {
       const tx = new Transaction();
@@ -185,8 +191,8 @@ const Marketplace = () => {
         target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
         arguments: [
           paymentCoin,
-          tx.object(dataset.id),
-          tx.pure.u64(days),
+          tx.object(selectedDataset.id),
+          tx.pure.u64(selectedDays),
           tx.object('0x6'),
         ],
       });
@@ -196,7 +202,8 @@ const Marketplace = () => {
         {
           onSuccess: (result) => {
             console.log("Purchase successful:", result.digest);
-            toast.success(`Subscription purchased for ${days} day(s)!`);
+            toast.success(`Subscription purchased for ${selectedDays} day(s)!`);
+            closePurchaseModal();
             loadMarketplace();
           },
           onError: (error) => {
@@ -226,10 +233,8 @@ const Marketplace = () => {
     if (mySubscriptions.has(dataset.id)) {
       return { text: "OWNED", disabled: true, variant: "outline" as const };
     }
-    const days = selectedDays[dataset.id] || 7;
-    const price = calculatePrice(dataset.durationSeconds, days);
     return { 
-      text: `PURCHASE (${formatPrice(price)} SUI)`, 
+      text: "PURCHASE", 
       disabled: false, 
       variant: "default" as const 
     };
@@ -256,18 +261,6 @@ const Marketplace = () => {
           <h1 className="text-4xl md:text-6xl font-bold text-center mb-8 neon-text glitch">
             VOICE MARKETPLACE
           </h1>
-
-          {/* Pricing Info Banner */}
-          <Card className="p-4 neon-border bg-card/80 backdrop-blur mb-8">
-            <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-primary flex-shrink-0 mt-1" />
-              <div className="text-sm text-muted-foreground">
-                <p className="font-bold text-primary mb-1">Dynamic Pricing:</p>
-                <p>Base price: 0.001 SUI/day for 30 seconds</p>
-                <p>• 1 minute = 0.002 SUI/day • 2 minutes = 0.004 SUI/day • 5 minutes = 0.01 SUI/day</p>
-              </div>
-            </div>
-          </Card>
 
           {/* Language Filter */}
           <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-8">
@@ -313,8 +306,6 @@ const Marketplace = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredDatasets.map((dataset) => {
                   const buttonState = getButtonState(dataset);
-                  const days = selectedDays[dataset.id] || 7;
-                  const price = calculatePrice(dataset.durationSeconds, days);
                   const isOwned = myDatasets.has(dataset.id) || mySubscriptions.has(dataset.id);
                   
                   return (
@@ -352,34 +343,9 @@ const Marketplace = () => {
                         </div>
                       </div>
 
-                      {!isOwned && (
-                        <div className="mb-4">
-                          <label className="text-sm font-bold text-primary mb-2 flex items-center gap-2">
-                            <Clock className="w-4 h-4" />
-                            Subscription Duration:
-                          </label>
-                          <div className="grid grid-cols-5 gap-1 mt-2">
-                            {dayOptions.map(option => (
-                              <Button
-                                key={option.days}
-                                variant={selectedDays[dataset.id] === option.days ? "default" : "outline"}
-                                size="sm"
-                                onClick={() => setSelectedDays(prev => ({ ...prev, [dataset.id]: option.days }))}
-                                className="text-xs py-1 h-auto"
-                              >
-                                {option.label}
-                              </Button>
-                            ))}
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-2 text-center">
-                            Total: <span className="text-accent font-bold">{formatPrice(price)} SUI</span> for {days} day(s)
-                          </p>
-                        </div>
-                      )}
-
                       <Button
-                        onClick={() => handlePurchase(dataset)}
-                        disabled={buttonState.disabled || purchasing === dataset.id}
+                        onClick={() => openPurchaseModal(dataset)}
+                        disabled={buttonState.disabled}
                         variant={buttonState.variant}
                         className={`w-full font-bold py-3 pixel-border ${
                           buttonState.disabled 
@@ -387,17 +353,8 @@ const Marketplace = () => {
                             : "bg-gradient-to-r from-primary to-secondary text-background hover:opacity-90"
                         }`}
                       >
-                        {purchasing === dataset.id ? (
-                          <>
-                            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                            PROCESSING...
-                          </>
-                        ) : (
-                          <>
-                            <ShoppingCart className="w-5 h-5 mr-2" />
-                            {buttonState.text}
-                          </>
-                        )}
+                        <ShoppingCart className="w-5 h-5 mr-2" />
+                        {buttonState.text}
                       </Button>
                     </Card>
                   );
@@ -415,6 +372,98 @@ const Marketplace = () => {
           )}
         </div>
       </div>
+
+      {/* Purchase Modal */}
+    {showPurchaseModal && selectedDataset && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+    <Card className="p-6 neon-border bg-card/90 backdrop-blur max-w-md w-full mx-4">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-xl font-bold text-primary">Purchase Subscription</h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={closePurchaseModal}
+          className="h-8 w-8 p-0 hover:bg-secondary/20"
+        >
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
+
+      <div className="space-y-6 mb-6">
+        {/* Dataset Info */}
+        <div className="bg-secondary/20 p-4 rounded-lg border border-primary/20">
+          <h4 className="font-bold text-primary text-lg mb-1">
+            {selectedDataset.language} - {selectedDataset.dialect}
+          </h4>
+          <p className="text-sm text-muted-foreground">Duration: {selectedDataset.duration}</p>
+        </div>
+
+        {/* Duration Selection */}
+        <div>
+          <label className="text-sm font-bold text-primary mb-3 flex items-center gap-2">
+            <Clock className="w-4 h-4" />
+            Select Subscription Duration:
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {dayOptions.map(option => (
+              <Button
+                key={option.days}
+                variant={selectedDays === option.days ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedDays(option.days)}
+                className="text-xs py-3 h-auto font-medium transition-all duration-200"
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {/* Price Display */}
+        <div className="bg-primary/10 p-4 rounded-lg border border-primary/20">
+          <p className="text-sm text-muted-foreground mb-1 text-center">Total Price</p>
+          <p className="text-2xl font-bold text-accent text-center mb-2">
+            {formatPrice(calculatePrice(selectedDataset.durationSeconds, selectedDays))} SUI
+          </p>
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>{selectedDays} day(s)</span>
+            <span>×</span>
+            <span>{formatPrice(calculatePrice(selectedDataset.durationSeconds, 1))} SUI/day</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex gap-3">
+        <Button
+          variant="outline"
+          onClick={closePurchaseModal}
+          className="flex-1 py-3 font-medium"
+          disabled={purchasing === selectedDataset.id}
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={handlePurchase}
+          disabled={purchasing === selectedDataset.id}
+          className="flex-1 py-3 font-bold bg-gradient-to-r from-primary to-secondary text-background hover:opacity-90 transition-opacity"
+        >
+          {purchasing === selectedDataset.id ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Processing...
+            </>
+          ) : (
+            <>
+              <ShoppingCart className="w-4 h-4 mr-2" />
+              Confirm Purchase
+            </>
+          )}
+        </Button>
+      </div>
+    </Card>
+  </div>
+)}
     </div>
   );
 };
