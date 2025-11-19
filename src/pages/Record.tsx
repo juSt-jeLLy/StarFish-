@@ -28,17 +28,48 @@ const languages = [
 
 const durations = ["30 seconds", "1 minute", "2 minutes", "5 minutes"];
 
-const sampleTexts = [
-  "The quick brown fox jumps over the lazy dog in the bright morning sunshine, while gentle breezes carry the scent of freshly bloomed flowers across the meadow. Birds chirp melodiously in the distance, creating a symphony of natural sounds that blend harmoniously with the rustling leaves. The sky stretches endlessly above, painted in brilliant shades of blue and dotted with fluffy white clouds that drift lazily by. This peaceful scene reminds us of the simple beauty that surrounds us every day, if we only take the time to notice and appreciate it. The warmth of the sun on our skin, the softness of grass beneath our feet, and the gentle whisper of wind through the trees all combine to create a moment of pure tranquility and contentment.",
-  
-  "Technology is rapidly changing the way we communicate and interact with the world around us, transforming every aspect of our daily lives in ways we could never have imagined just a few decades ago. From smartphones that connect us instantly to people across the globe, to artificial intelligence that can process vast amounts of information in seconds, the pace of innovation continues to accelerate at an unprecedented rate. Social media platforms have revolutionized how we share our thoughts, experiences, and creativity with others, while cloud computing enables us to access our data from anywhere at any time. Virtual reality is beginning to blur the lines between physical and digital spaces, opening up new possibilities for education, entertainment, and collaboration. As we stand on the brink of even more dramatic technological advances, including quantum computing and advanced robotics, it becomes increasingly important to consider how these tools can be used responsibly to improve human welfare and protect our environment for future generations.",
-  
-  "Reading books opens up new worlds and expands our imagination beyond boundaries, allowing us to experience lives different from our own and explore places we may never physically visit. Through the written word, we can travel through time, witnessing historical events as if we were there, or journey to fantastical realms that exist only in the minds of creative authors. Books provide us with knowledge, wisdom, and perspectives that challenge our assumptions and broaden our understanding of the human experience. They offer solace in difficult times, inspiration when we need motivation, and entertainment when we seek escape from the pressures of everyday life. The act of reading itself is a form of meditation, requiring focus and engagement that pulls us away from the constant distractions of modern technology. Whether we prefer classic literature, contemporary fiction, non-fiction explorations of science and history, or poetry that captures emotions in beautiful language, books remain one of humanity's greatest inventions and most enduring sources of enlightenment and joy.",
-  
-  "Music has the power to move us emotionally and connect people across cultures, languages, and generations in ways that few other art forms can achieve. A simple melody can transport us back to cherished memories, evoke powerful feelings of joy or sorrow, and create bonds between strangers who share a love for the same songs or artists. Throughout human history, music has played a central role in celebrations, rituals, and everyday life, serving as a universal language that transcends barriers of communication. From the rhythmic drumming of ancient tribal ceremonies to the complex symphonies of classical composers, from the rebellious energy of rock and roll to the intricate patterns of jazz improvisation, music reflects the diversity and creativity of human expression. It has the ability to soothe our anxieties, energize our spirits, and bring communities together in shared experiences of beauty and meaning. Musicians dedicate their lives to mastering their craft, pouring their hearts into compositions and performances that touch the souls of listeners around the world.",
-  
-  "The ocean waves crash against the rocky shore as seabirds circle overhead, their cries echoing across the vast expanse of water that stretches to the horizon. The rhythmic sound of the surf has a hypnotic quality, drawing our attention to the eternal dance between land and sea that has continued for millions of years. Salt spray fills the air, carried on winds that have traveled across thousands of miles of open ocean. Tide pools hidden among the rocks teem with diverse marine life, from tiny crabs scuttling sideways to colorful anemones waving their tentacles in the current. The smell of seaweed and brine is strong and distinctive, a reminder of the ocean's powerful presence and its crucial role in regulating our planet's climate and supporting countless ecosystems. As the sun begins to set, painting the sky in spectacular hues of orange, pink, and purple, the ocean reflects these colors like a vast mirror, creating a breathtaking display of natural beauty that reminds us of our connection to the natural world and our responsibility to protect these precious environments.",
-];
+const languageTexts: { [key: string]: string[] } = {
+  English: [
+    "The quick brown fox jumps over the lazy dog while birds sing in the morning sunshine. Gentle breezes carry the scent of fresh flowers across the peaceful meadow.",
+    "Technology transforms how we communicate and interact with the world around us. Innovation continues to accelerate, opening new possibilities for education and collaboration.",
+    "Reading books opens new worlds and expands our imagination beyond boundaries. Stories allow us to experience lives different from our own and explore distant places."
+  ],
+  Spanish: [
+    "El rápido zorro marrón salta sobre el perro perezoso bajo el cálido sol de la mañana. Los pájaros cantan alegremente mientras la brisa acaricia los campos verdes.",
+    "La tecnología moderna transforma nuestra forma de vivir y comunicarnos cada día. Los avances nos conectan con personas de todo el mundo instantáneamente.",
+    "La lectura de libros abre puertas a nuevos mundos llenos de imaginación y conocimiento. Cada historia nos transporta a lugares mágicos y experiencias únicas."
+  ],
+  Mandarin: [
+    "快速的棕色狐狸跳过懒狗，在温暖的阳光下。鸟儿在清晨歌唱，微风轻轻吹过绿色的田野，带来花香和宁静。",
+    "现代技术改变了我们的生活方式和沟通方式。创新不断加速，为教育和合作开辟了新的可能性。",
+    "阅读书籍打开了通往新世界的大门，扩展了我们的想象力。故事让我们体验不同的生活，探索遥远的地方。"
+  ],
+  French: [
+    "Le rapide renard brun saute par-dessus le chien paresseux sous le soleil chaud du matin. Les oiseaux chantent joyeusement dans la brise légère des champs verts.",
+    "La technologie moderne transforme notre façon de vivre et de communiquer chaque jour. Les progrès nous connectent avec des personnes du monde entier instantanément.",
+    "La lecture de livres ouvre des portes vers de nouveaux mondes pleins d'imagination et de connaissances. Chaque histoire nous transporte vers des lieux magiques."
+  ],
+  Arabic: [
+    "يقفز الثعلب البني السريع فوق الكلب الكسول تحت أشعة الشمس الدافئة. الطيور تغني بسعادة في النسيم الخفيف للحقول الخضراء.",
+    "تغير التكنولوجيا الحديثة طريقة عيشنا وتواصلنا كل يوم. التقدم يربطنا بأشخاص من جميع أنحاء العالم على الفور.",
+    "فتح الكتب أبوابًا لعوالم جديدة مليئة بالخيال والمعرفة. كل قصة تنقلنا إلى أماكن سحرية وتجارب فريدة."
+  ],
+  Hindi: [
+    "तेज भूरी लोमड़ी आलसी कुत्ते के ऊपर कूदती है, गर्म धूप में। पक्षी हरे खेतों की हल्की हवा में खुशी से गाते हैं।",
+    "आधुनिक प्रौद्योगिकी हर दिन हमारे जीने और संवाद करने के तरीके को बदल रही है। प्रगति हमें तुरंत दुनिया भर के लोगों से जोड़ती है।",
+    "किताबें पढ़ना कल्पना और ज्ञान से भरी नई दुनिया के दरवाजे खोलती है। हर कहानी हमें जादुई स्थानों और अनूठे अनुभवों में ले जाती है।"
+  ],
+  Portuguese: [
+    "A rápida raposa marrom pula sobre o cão preguiçoso sob o sol quente da manhã. Os pássaros cantam alegremente na brisa leve dos campos verdes.",
+    "A tecnologia moderna transforma nossa forma de viver e nos comunicar a cada dia. Os avanços nos conectam com pessoas de todo o mundo instantaneamente.",
+    "A leitura de livros abre portas para novos mundos cheios de imaginação e conhecimento. Cada história nos transporta para lugares mágicos e experiências únicas."
+  ],
+  Bengali: [
+    "দ্রুত বাদামি শিয়াল উষ্ণ সকালের রোদে অলস কুকুরের উপর দিয়ে লাফ দেয়। পাখিরা সবুজ মাঠের হালকা বাতাসে খুশিতে গান গায়।",
+    "আধুনিক প্রযুক্তি প্রতিদিন আমাদের বেঁচে থাকা এবং যোগাযোগের way তরীকে রূপান্তরিত করে। অগ্রগতি আমাদের সাথে সারা বিশ্বের মানুষকে তাত্ক্ষণিকভাবে সংযুক্ত করে।",
+    "বই পড়া কল্পনা ও জ্ঞানপূর্ণ নতুন বিশ্বের দরজা খুলে দেয়। প্রতিটি গল্প আমাদের জাদুকরী জায়গা এবং অনন্য অভিজ্ঞতায় নিয়ে যায়।"
+  ]
+};
 
 const Record = () => {
   const [selectedLanguage, setSelectedLanguage] = useState("");
@@ -67,7 +98,8 @@ const Record = () => {
 
   const handleDurationSelect = (duration: string) => {
     setSelectedDuration(duration);
-    const randomText = sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
+    const texts = languageTexts[selectedLanguage] || languageTexts.English;
+    const randomText = texts[Math.floor(Math.random() * texts.length)];
     setCurrentText(randomText);
     setRecordedBlob(null);
     setPublishedDataset(null);
