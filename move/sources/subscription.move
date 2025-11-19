@@ -12,6 +12,9 @@ const ELanguageNotFound: u64 = 4;
 const EDialectNotFound: u64 = 5;
 const EDurationNotFound: u64 = 6;
 const ENotCategoryAdmin: u64 = 7;
+const ELanguageAlreadyExists: u64 = 8;
+const EDialectAlreadyExists: u64 = 9;
+const EDurationAlreadyExists: u64 = 10;
 
 // Base price: 0.001 SUI per day for 30 seconds = 1_000_000 MIST
 const BASE_PRICE_PER_DAY: u64 = 1_000_000;
@@ -22,6 +25,7 @@ public struct CategoryRegistry has key {
     id: UID,
     admin: address,
     languages: VecMap<String, LanguageCategory>,
+    existing_durations: VecMap<String, bool>, // Track duration labels to prevent duplicates
 }
 
 /// Language category with dialects
@@ -140,6 +144,7 @@ fun init(ctx: &mut TxContext) {
         id: object::new(ctx),
         admin: ctx.sender(),
         languages: vec_map::empty(),
+        existing_durations: vec_map::empty(),
     };
     
     event::emit(CategoryRegistryCreated {
@@ -158,6 +163,9 @@ public fun add_language(
     c: &Clock,
     ctx: &mut TxContext,
 ) {
+    // Check if language already exists
+    assert!(!vec_map::contains(&registry.languages, &language_name), ELanguageAlreadyExists);
+    
     let language_category = LanguageCategory {
         name: language_name,
         dialects: vector::empty(),
@@ -197,6 +205,14 @@ public fun add_dialect(
     
     let language = vec_map::get_mut(&mut registry.languages, &language_name);
     
+    // Check if dialect already exists in this language
+    let mut i = 0;
+    while (i < vector::length(&language.dialects)) {
+        let existing_dialect = vector::borrow(&language.dialects, i);
+        assert!(existing_dialect.name != dialect_name, EDialectAlreadyExists);
+        i = i + 1;
+    };
+    
     let dialect_info = DialectInfo {
         name: dialect_name,
         description: dialect_description,
@@ -224,11 +240,15 @@ entry fun add_dialect_entry(
 
 /// Create a new duration option
 public fun create_duration_option(
+    registry: &mut CategoryRegistry,
     label: String,
     seconds: u64,
     c: &Clock,
     ctx: &mut TxContext,
 ): DurationOption {
+    // Check if duration label already exists
+    assert!(!vec_map::contains(&registry.existing_durations, &label), EDurationAlreadyExists);
+    
     let duration = DurationOption {
         id: object::new(ctx),
         label,
@@ -237,8 +257,13 @@ public fun create_duration_option(
         created_at: c.timestamp_ms(),
     };
     
+    let duration_id = object::id(&duration);
+    
+    // Mark this duration label as existing
+    vec_map::insert(&mut registry.existing_durations, label, true);
+    
     event::emit(DurationOptionCreated {
-        duration_id: object::id(&duration),
+        duration_id,
         label,
         seconds,
         created_by: ctx.sender(),
@@ -248,12 +273,13 @@ public fun create_duration_option(
 }
 
 entry fun create_duration_option_entry(
+    registry: &mut CategoryRegistry,
     label: String,
     seconds: u64,
     c: &Clock,
     ctx: &mut TxContext,
 ) {
-    let duration = create_duration_option(label, seconds, c, ctx);
+    let duration = create_duration_option(registry, label, seconds, c, ctx);
     transfer::share_object(duration);
 }
 
