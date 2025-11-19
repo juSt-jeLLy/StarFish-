@@ -1,4 +1,4 @@
-// Voice Data Marketplace with Dynamic Pricing and On-Chain Categories
+// Voice Data Marketplace with Dynamic Pricing, On-Chain Categories, and Creator Discounts
 module starfish::voice_marketplace;
 
 use std::string::String;
@@ -20,12 +20,16 @@ const EDurationAlreadyExists: u64 = 10;
 const BASE_PRICE_PER_DAY: u64 = 1_000_000;
 const MS_PER_DAY: u64 = 24 * 60 * 60 * 1000;
 
+// Default creator discount: 20% (represented as 20 out of 100)
+const DEFAULT_CREATOR_DISCOUNT_PERCENT: u64 = 20;
+
 /// Registry for all categories - SHARED object
 public struct CategoryRegistry has key {
     id: UID,
     admin: address,
     languages: VecMap<String, LanguageCategory>,
     existing_durations: VecMap<String, bool>, // Track duration labels to prevent duplicates
+    creator_discount_percent: u64, // Discount percentage for language creators (0-100)
 }
 
 /// Language category with dialects
@@ -81,6 +85,7 @@ public struct Subscription has key, store {
     created_at: u64,
     expires_at: u64,
     days_purchased: u64,
+    discount_applied: u64, // Amount of discount applied in MIST
 }
 
 /// Admin capability for dataset creator
@@ -93,6 +98,7 @@ public struct DatasetCap has key, store {
 public struct CategoryRegistryCreated has copy, drop {
     registry_id: ID,
     admin: address,
+    creator_discount_percent: u64,
 }
 
 /// Event emitted when language is added
@@ -130,9 +136,19 @@ public struct SubscriptionPurchased has copy, drop {
     dataset_id: ID,
     subscriber: address,
     creator: address,
-    amount: u64,
+    original_price: u64,
+    discount_applied: u64,
+    final_price: u64,
     days_purchased: u64,
     expires_at: u64,
+    is_language_creator: bool,
+}
+
+/// Event emitted when creator discount is updated
+public struct CreatorDiscountUpdated has copy, drop {
+    old_discount_percent: u64,
+    new_discount_percent: u64,
+    updated_by: address,
 }
 
 //////////////////////////////////////////
@@ -145,14 +161,43 @@ fun init(ctx: &mut TxContext) {
         admin: ctx.sender(),
         languages: vec_map::empty(),
         existing_durations: vec_map::empty(),
+        creator_discount_percent: DEFAULT_CREATOR_DISCOUNT_PERCENT,
     };
     
     event::emit(CategoryRegistryCreated {
         registry_id: object::id(&registry),
         admin: ctx.sender(),
+        creator_discount_percent: DEFAULT_CREATOR_DISCOUNT_PERCENT,
     });
     
     transfer::share_object(registry);
+}
+
+/// Update the creator discount percentage (admin only)
+public fun update_creator_discount(
+    registry: &mut CategoryRegistry,
+    new_discount_percent: u64,
+    ctx: &mut TxContext,
+) {
+    assert!(ctx.sender() == registry.admin, ENotCategoryAdmin);
+    assert!(new_discount_percent <= 100, EInvalidFee);
+    
+    let old_discount = registry.creator_discount_percent;
+    registry.creator_discount_percent = new_discount_percent;
+    
+    event::emit(CreatorDiscountUpdated {
+        old_discount_percent: old_discount,
+        new_discount_percent,
+        updated_by: ctx.sender(),
+    });
+}
+
+entry fun update_creator_discount_entry(
+    registry: &mut CategoryRegistry,
+    new_discount_percent: u64,
+    ctx: &mut TxContext,
+) {
+    update_creator_discount(registry, new_discount_percent, ctx);
 }
 
 /// Add a new language category
@@ -293,6 +338,28 @@ public fun calculate_price(duration_seconds: u64, days: u64): u64 {
     BASE_PRICE_PER_DAY * duration_multiplier * days
 }
 
+/// Calculate discounted price for language creators
+/// Returns (final_price, discount_amount)
+public fun calculate_creator_price(
+    registry: &CategoryRegistry,
+    duration_seconds: u64, 
+    days: u64
+): (u64, u64) {
+    let original_price = calculate_price(duration_seconds, days);
+    let discount_amount = (original_price * registry.creator_discount_percent) / 100;
+    let final_price = original_price - discount_amount;
+    (final_price, discount_amount)
+}
+
+/// Check if an address is the creator of a language
+fun is_language_creator(registry: &CategoryRegistry, language: &String, user: address): bool {
+    if (!vec_map::contains(&registry.languages, language)) {
+        return false
+    };
+    let lang_category = vec_map::get(&registry.languages, language);
+    lang_category.created_by == user
+}
+
 //////////////////////////////////////////
 // Dataset Management
 
@@ -403,7 +470,9 @@ entry fun publish_entry(
 }
 
 /// Purchase subscription to a dataset for specified number of days
+/// Automatically applies discount if subscriber is the language creator
 public fun subscribe(
+    registry: &CategoryRegistry,
     payment: Coin<SUI>,
     dataset: &VoiceDataset,
     days: u64,
@@ -412,8 +481,18 @@ public fun subscribe(
 ): Subscription {
     assert!(ctx.sender() != dataset.creator, ECannotBuyOwnDataset);
     
-    let expected_fee = calculate_price(dataset.duration_seconds, days);
-    assert!(payment.value() == expected_fee, EInvalidFee);
+    let subscriber = ctx.sender();
+    let is_creator = is_language_creator(registry, &dataset.language, subscriber);
+    
+    // Calculate price (with discount if applicable)
+    let (final_price, discount_amount) = if (is_creator) {
+        calculate_creator_price(registry, dataset.duration_seconds, days)
+    } else {
+        let price = calculate_price(dataset.duration_seconds, days);
+        (price, 0)
+    };
+    
+    assert!(payment.value() == final_price, EInvalidFee);
     
     transfer::public_transfer(payment, dataset.creator);
     
@@ -423,32 +502,37 @@ public fun subscribe(
     let subscription = Subscription {
         id: object::new(ctx),
         dataset_id: object::id(dataset),
-        subscriber: ctx.sender(),
+        subscriber,
         created_at: current_time,
         expires_at,
         days_purchased: days,
+        discount_applied: discount_amount,
     };
     
     event::emit(SubscriptionPurchased {
         dataset_id: object::id(dataset),
-        subscriber: ctx.sender(),
+        subscriber,
         creator: dataset.creator,
-        amount: expected_fee,
+        original_price: calculate_price(dataset.duration_seconds, days),
+        discount_applied: discount_amount,
+        final_price,
         days_purchased: days,
         expires_at,
+        is_language_creator: is_creator,
     });
     
     subscription
 }
 
 entry fun subscribe_entry(
+    registry: &CategoryRegistry,
     payment: Coin<SUI>,
     dataset: &VoiceDataset,
     days: u64,
     c: &Clock,
     ctx: &mut TxContext,
 ) {
-    transfer::transfer(subscribe(payment, dataset, days, c, ctx), ctx.sender());
+    transfer::transfer(subscribe(registry, payment, dataset, days, c, ctx), ctx.sender());
 }
 
 //////////////////////////////////////////
@@ -503,6 +587,10 @@ public fun get_base_price_per_day(): u64 {
     BASE_PRICE_PER_DAY
 }
 
+public fun get_creator_discount_percent(registry: &CategoryRegistry): u64 {
+    registry.creator_discount_percent
+}
+
 public fun get_dataset_creator(dataset: &VoiceDataset): address {
     dataset.creator
 }
@@ -511,8 +599,16 @@ public fun get_dataset_duration(dataset: &VoiceDataset): u64 {
     dataset.duration_seconds
 }
 
+public fun get_dataset_language(dataset: &VoiceDataset): String {
+    dataset.language
+}
+
 public fun get_subscription_expiry(sub: &Subscription): u64 {
     sub.expires_at
+}
+
+public fun get_subscription_discount(sub: &Subscription): u64 {
+    sub.discount_applied
 }
 
 public fun is_subscription_active(sub: &Subscription, c: &Clock): bool {
@@ -523,6 +619,20 @@ public fun get_language_sample_texts(registry: &CategoryRegistry, language: &Str
     assert!(vec_map::contains(&registry.languages, language), ELanguageNotFound);
     let lang_cat = vec_map::get(&registry.languages, language);
     lang_cat.sample_texts
+}
+
+public fun get_language_creator(registry: &CategoryRegistry, language: &String): address {
+    assert!(vec_map::contains(&registry.languages, language), ELanguageNotFound);
+    let lang_cat = vec_map::get(&registry.languages, language);
+    lang_cat.created_by
+}
+
+public fun check_is_language_creator(
+    registry: &CategoryRegistry,
+    language: &String,
+    user: address
+): bool {
+    is_language_creator(registry, language, user)
 }
 
 public fun get_duration_seconds(duration: &DurationOption): u64 {
