@@ -2,14 +2,14 @@ import { useState, useEffect } from "react";
 import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Database, Languages, ShoppingCart, Loader2, Filter, Clock, X } from "lucide-react";
+import { Database, Languages, ShoppingCart, Loader2, Filter, Clock, X, Star, Tag } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import spaceBg from "@/assets/space-bg.jpg";
 import { Transaction } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 
-const PACKAGE_ID = "0x65fa4fb259e3573326f4949959220224795c9c4888f15bbbbb2befd9e3457d3c";
-const REGISTRY_ID = "0x245eedd93194c575480582c13be45ab9a0f9a8befbff0f7294f51e2d286348d6"; // Replace after deployment
+const PACKAGE_ID = "0xf02a406e6d8948b736b58d56cba64b89d1cd3b6d4af13355df44c8103e5b1a97";
+const REGISTRY_ID = "0x69d494bb468615cf21deb0620d9bcd0a1877892ea55754e0f50ce10aed5c943f";
 const BASE_PRICE_PER_DAY = 1_000_000; // 0.001 SUI in MIST
 
 interface DatasetData {
@@ -21,6 +21,7 @@ interface DatasetData {
   durationSeconds: number;
   blobId: string;
   createdAt: number;
+  languageCreator: string; // Address of who created the language
 }
 
 interface LanguageData {
@@ -51,6 +52,8 @@ const Marketplace = () => {
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
   const [selectedDays, setSelectedDays] = useState<number>(7);
   const [availableLanguages, setAvailableLanguages] = useState<LanguageData[]>([]);
+  const [creatorDiscountPercent, setCreatorDiscountPercent] = useState<number>(20);
+  const [languageCreators, setLanguageCreators] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     loadMarketplace();
@@ -63,12 +66,47 @@ const Marketplace = () => {
     return BASE_PRICE_PER_DAY * durationMultiplier * days;
   };
 
+  const calculateDiscountedPrice = (originalPrice: number, discountPercent: number): { finalPrice: number; discountAmount: number } => {
+    const discountAmount = Math.floor((originalPrice * discountPercent) / 100);
+    const finalPrice = originalPrice - discountAmount;
+    return { finalPrice, discountAmount };
+  };
+
   const formatPrice = (mist: number): string => {
     return (mist / 1_000_000_000).toFixed(4);
   };
 
+  const isLanguageCreator = (language: string): boolean => {
+    if (!currentAccount?.address) return false;
+    const creator = languageCreators.get(language);
+    return creator === currentAccount.address;
+  };
+
   const loadMarketplace = async () => {
     try {
+      // Load creator discount percentage from registry
+      const registry = await suiClient.getObject({
+        id: REGISTRY_ID,
+        options: { showContent: true },
+      });
+
+      const registryFields = (registry.data?.content as any)?.fields;
+      if (registryFields?.creator_discount_percent) {
+        setCreatorDiscountPercent(parseInt(registryFields.creator_discount_percent));
+      }
+
+      // Load language creators
+      if (registryFields?.languages?.fields?.contents) {
+        const languagesMap = registryFields.languages.fields.contents;
+        const creatorsMap = new Map<string, string>();
+        for (const entry of languagesMap) {
+          const langName = entry.fields.key;
+          const langData = entry.fields.value.fields;
+          creatorsMap.set(langName, langData.created_by);
+        }
+        setLanguageCreators(creatorsMap);
+      }
+
       // Load all datasets from events
       const allObjects = await suiClient.queryEvents({
         query: {
@@ -90,6 +128,8 @@ const Marketplace = () => {
             const fields = (dataset.data?.content as any)?.fields;
             if (!fields) return null;
 
+            const languageCreator = languageCreators.get(fields.language) || "";
+
             return {
               id: datasetId,
               creator: fields.creator,
@@ -99,6 +139,7 @@ const Marketplace = () => {
               durationSeconds: parseInt(fields.duration_seconds),
               blobId: fields.blob_id,
               createdAt: parseInt(fields.created_at),
+              languageCreator,
             };
           } catch (err) {
             console.error("Error loading dataset:", datasetId, err);
@@ -187,7 +228,11 @@ const Marketplace = () => {
       return;
     }
 
-    const price = calculatePrice(selectedDataset.durationSeconds, selectedDays);
+    const userIsCreator = isLanguageCreator(selectedDataset.language);
+    const originalPrice = calculatePrice(selectedDataset.durationSeconds, selectedDays);
+    const { finalPrice } = userIsCreator 
+      ? calculateDiscountedPrice(originalPrice, creatorDiscountPercent)
+      : { finalPrice: originalPrice };
 
     setPurchasing(selectedDataset.id);
 
@@ -195,11 +240,12 @@ const Marketplace = () => {
       const tx = new Transaction();
       tx.setGasBudget(10000000);
 
-      const [paymentCoin] = tx.splitCoins(tx.gas, [price]);
+      const [paymentCoin] = tx.splitCoins(tx.gas, [finalPrice]);
 
       tx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::subscribe_entry`,
         arguments: [
+          tx.object(REGISTRY_ID), // Registry for discount checking
           paymentCoin,
           tx.object(selectedDataset.id),
           tx.pure.u64(selectedDays),
@@ -212,7 +258,11 @@ const Marketplace = () => {
         {
           onSuccess: (result) => {
             console.log("Purchase successful:", result.digest);
-            toast.success(`Subscription purchased for ${selectedDays} day(s)!`);
+            if (userIsCreator) {
+              toast.success(`🎉 Creator discount applied! Subscription purchased for ${selectedDays} day(s)!`);
+            } else {
+              toast.success(`Subscription purchased for ${selectedDays} day(s)!`);
+            }
             closePurchaseModal();
             loadMarketplace();
           },
@@ -256,6 +306,29 @@ const Marketplace = () => {
     ? availableLanguages.find(l => l.name === selectedLanguage)?.dialects || []
     : [];
 
+  // Calculate price preview with discount
+  const getPriceDisplay = (dataset: DatasetData) => {
+    const pricePerDay = calculatePrice(dataset.durationSeconds, 1);
+    const userIsCreator = isLanguageCreator(dataset.language);
+    
+    if (userIsCreator) {
+      const { finalPrice, discountAmount } = calculateDiscountedPrice(pricePerDay, creatorDiscountPercent);
+      return {
+        hasDiscount: true,
+        originalPrice: formatPrice(pricePerDay),
+        finalPrice: formatPrice(finalPrice),
+        discountPercent: creatorDiscountPercent,
+      };
+    }
+    
+    return {
+      hasDiscount: false,
+      originalPrice: formatPrice(pricePerDay),
+      finalPrice: formatPrice(pricePerDay),
+      discountPercent: 0,
+    };
+  };
+
   return (
     <div className="min-h-screen relative overflow-hidden">
       <div 
@@ -278,6 +351,9 @@ const Marketplace = () => {
             VOICE MARKETPLACE
           </h1>
 
+          {/* Creator Discount Banner */}
+        
+
           {/* Advanced Filters */}
           <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-8">
             <div className="space-y-4">
@@ -294,20 +370,24 @@ const Marketplace = () => {
                 >
                   All Languages
                 </Button>
-                {availableLanguages.map(lang => (
-                  <Button
-                    key={lang.name}
-                    variant={selectedLanguage === lang.name ? "default" : "outline"}
-                    onClick={() => {
-                      setSelectedLanguage(lang.name);
-                      setSelectedDialect("");
-                    }}
-                    className="pixel-border"
-                  >
-                    {lang.name}
-                    <span className="ml-2 text-xs opacity-70">({lang.dialects.length})</span>
-                  </Button>
-                ))}
+                {availableLanguages.map(lang => {
+                  const userCreatedThis = isLanguageCreator(lang.name);
+                  return (
+                    <Button
+                      key={lang.name}
+                      variant={selectedLanguage === lang.name ? "default" : "outline"}
+                      onClick={() => {
+                        setSelectedLanguage(lang.name);
+                        setSelectedDialect("");
+                      }}
+                      className={`pixel-border ${userCreatedThis ? 'border-accent border-2' : ''}`}
+                    >
+                      {lang.name}
+                      {userCreatedThis && <Star className="w-4 h-4 ml-1 text-accent" />}
+                      <span className="ml-2 text-xs opacity-70">({lang.dialects.length})</span>
+                    </Button>
+                  );
+                })}
               </div>
 
               {/* Dialect Filter - shows when language is selected */}
@@ -403,12 +483,22 @@ const Marketplace = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredDatasets.map((dataset) => {
                   const buttonState = getButtonState(dataset);
+                  const priceInfo = getPriceDisplay(dataset);
                   
                   return (
                     <Card
                       key={dataset.id}
-                      className="p-6 neon-border bg-card/80 backdrop-blur hover-lift"
+                      className={`p-6 neon-border bg-card/80 backdrop-blur hover-lift relative ${
+                        priceInfo.hasDiscount ? 'border-accent border-2' : ''
+                      }`}
                     >
+                      {priceInfo.hasDiscount && (
+                        <div className="absolute top-2 right-2 bg-accent text-background px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
+                          <Tag className="w-3 h-3" />
+                          {priceInfo.discountPercent}% OFF
+                        </div>
+                      )}
+                      
                       <div className="flex items-start justify-between mb-4">
                         <div>
                           <h3 className="text-xl font-bold text-primary mb-2">
@@ -433,9 +523,22 @@ const Marketplace = () => {
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-foreground/70">Price/Day:</span>
-                          <span className="text-accent font-bold">
-                            {formatPrice(calculatePrice(dataset.durationSeconds, 1))} SUI
-                          </span>
+                          <div className="flex flex-col items-end">
+                            {priceInfo.hasDiscount ? (
+                              <>
+                                <span className="text-muted-foreground line-through text-xs">
+                                  {priceInfo.originalPrice} SUI
+                                </span>
+                                <span className="text-accent font-bold">
+                                  {priceInfo.finalPrice} SUI
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-accent font-bold">
+                                {priceInfo.finalPrice} SUI
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -446,6 +549,8 @@ const Marketplace = () => {
                         className={`w-full font-bold py-3 pixel-border ${
                           buttonState.disabled 
                             ? "opacity-50" 
+                            : priceInfo.hasDiscount
+                            ? "bg-gradient-to-r from-accent to-primary text-background hover:opacity-90"
                             : "bg-gradient-to-r from-primary to-secondary text-background hover:opacity-90"
                         }`}
                       >
@@ -485,6 +590,18 @@ const Marketplace = () => {
               </Button>
             </div>
 
+            {isLanguageCreator(selectedDataset.language) && (
+              <div className="mb-6 p-4 bg-accent/20 border-2 border-accent rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Star className="w-5 h-5 text-accent" />
+                  <span className="font-bold text-accent">Creator Discount Active!</span>
+                </div>
+                <p className="text-sm text-foreground">
+                  As the creator of {selectedDataset.language}, you get {creatorDiscountPercent}% off!
+                </p>
+              </div>
+            )}
+
             <div className="space-y-6 mb-6">
               {/* Dataset Info */}
               <div className="bg-secondary/20 p-4 rounded-lg border border-primary/20">
@@ -518,9 +635,37 @@ const Marketplace = () => {
               {/* Price Display */}
               <div className="bg-primary/10 p-4 rounded-lg border border-primary/20">
                 <p className="text-sm text-muted-foreground mb-1 text-center">Total Price</p>
-                <p className="text-2xl font-bold text-accent text-center mb-2">
-                  {formatPrice(calculatePrice(selectedDataset.durationSeconds, selectedDays))} SUI
-                </p>
+                
+                {isLanguageCreator(selectedDataset.language) ? (
+                  <>
+                    <div className="text-center mb-2">
+                      <p className="text-lg text-muted-foreground line-through">
+                        {formatPrice(calculatePrice(selectedDataset.durationSeconds, selectedDays))} SUI
+                      </p>
+                      <p className="text-2xl font-bold text-accent">
+                        {formatPrice(
+                          calculateDiscountedPrice(
+                            calculatePrice(selectedDataset.durationSeconds, selectedDays),
+                            creatorDiscountPercent
+                          ).finalPrice
+                        )} SUI
+                      </p>
+                      <p className="text-xs text-accent font-bold mt-1">
+                        Save {formatPrice(
+                          calculateDiscountedPrice(
+                            calculatePrice(selectedDataset.durationSeconds, selectedDays),
+                            creatorDiscountPercent
+                          ).discountAmount
+                        )} SUI ({creatorDiscountPercent}% off)
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-2xl font-bold text-accent text-center mb-2">
+                    {formatPrice(calculatePrice(selectedDataset.durationSeconds, selectedDays))} SUI
+                  </p>
+                )}
+                
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>{selectedDays} day(s)</span>
                   <span>×</span>
@@ -542,7 +687,11 @@ const Marketplace = () => {
               <Button
                 onClick={handlePurchase}
                 disabled={purchasing === selectedDataset.id}
-                className="flex-1 py-3 font-bold bg-gradient-to-r from-primary to-secondary text-background hover:opacity-90 transition-opacity"
+                className={`flex-1 py-3 font-bold ${
+                  isLanguageCreator(selectedDataset.language)
+                    ? 'bg-gradient-to-r from-accent to-primary'
+                    : 'bg-gradient-to-r from-primary to-secondary'
+                } text-background hover:opacity-90 transition-opacity`}
               >
                 {purchasing === selectedDataset.id ? (
                   <>
