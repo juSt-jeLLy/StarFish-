@@ -11,7 +11,9 @@
 
 ## 🌊 What is STARFISH?
 
-**StarFish** is a decentralized marketplace for voice data where users can securely monetize their voice recordings through encrypted data subscriptions. Built on **Sui blockchain** with **Seal encryption**, the platform enables creators to upload voice datasets in various languages and dialects, which are encrypted and stored on **Walrus decentralized storage**. 
+**StarFish** is a **fully decentralized, non-custodial** marketplace for voice data where users can securely monetize their voice recordings through encrypted data subscriptions. Built on **Sui blockchain** with **Seal encryption**, the platform enables creators to upload voice datasets in various languages and dialects, which are encrypted and stored on **Walrus decentralized storage**. 
+
+**🚫 No Backend. No Servers. No Custody.** Everything runs on-chain and on decentralized infrastructure—there's no central server that can be shut down, no company holding your data, and no middleman taking cuts.
 
 Buyers can purchase time-limited subscriptions to access these datasets, with payments going directly to creators. The system uses advanced cryptographic access control to ensure only authorized subscribers can decrypt and download the voice data, creating a trustless marketplace for **AI training data**, **voice cloning**, and **linguistic research** while maintaining complete privacy and security through end-to-end encryption.
 
@@ -67,6 +69,20 @@ This is the **first voice data marketplace** that enforces quality through a **r
                         │  (Key Management)│
                         └─────────────────┘
 ```
+
+### 💯 Fully Decentralized Stack
+
+| Layer | Technology | Decentralized? |
+|-------|------------|----------------|
+| Smart Contract | Sui Blockchain | ✅ On-chain |
+| Data Storage | Walrus | ✅ Decentralized blobs |
+| Encryption | Seal | ✅ Threshold cryptography |
+| Access Control | Smart Contract | ✅ On-chain verification |
+| Payments | SUI tokens | ✅ Direct to creators |
+| Backend Server | **None** | ✅ No backend needed |
+| Custody | **None** | ✅ Non-custodial |
+
+**Zero centralized infrastructure** — the frontend is a static site that talks directly to the blockchain.
 
 ### Tech Stack
 
@@ -156,6 +172,8 @@ entry fun subscribe_bulk_3(
 | **Incentives** | One-time payment | Ongoing royalties per subscription |
 | **Language Preservation** | No special incentive | Creators of rare languages get discounts |
 | **Privacy** | Platform sees all data | Encrypted until purchase |
+| **Infrastructure** | Centralized servers | Fully decentralized, no backend |
+| **Custody** | Platform holds data | Non-custodial, user-controlled |
 | **Data Quality** | Mixed, unverified uploads | Record-only model, no uploads |
 
 ---
@@ -272,11 +290,12 @@ STARFISH creates **economic incentives** for language preservation:
 **Track:** Data Economy/Marketplaces
 
 **Key Innovations:**
-1. **Creator incentive model** - Language creators get permanent discounts
-2. **Encrypted-until-purchase** - Seal threshold encryption protects content
-3. **Immutable preservation** - Walrus ensures data survives platform changes
-4. **On-chain provenance** - Every recording has verifiable creator attribution
-5. **Record-only approach** - No file uploads, only in-app recordings for guaranteed quality
+1. **Fully decentralized** - No backend servers, no custody, everything on-chain
+2. **Creator incentive model** - Language creators get permanent discounts
+3. **Encrypted-until-purchase** - Seal threshold encryption protects content
+4. **Immutable preservation** - Walrus ensures data survives platform changes
+5. **On-chain provenance** - Every recording has verifiable creator attribution
+6. **Record-only approach** - No file uploads, only in-app recordings for guaranteed quality
 
 ---
 
