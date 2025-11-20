@@ -11,7 +11,7 @@
 
 ## 🌊 What is STARFISH?
 
-**StarFish** is a **fully decentralized, non-custodial** marketplace for voice data where users can securely monetize their voice recordings through encrypted data subscriptions. Built on **Sui blockchain** with **Seal encryption**, the platform enables creators to upload voice datasets in various languages and dialects, which are encrypted and stored on **Walrus decentralized storage**. 
+**StarFish** is a **fully decentralized, non-custodial** marketplace for voice data where users can securely monetize their voice recordings through encrypted data subscriptions. Built on **Sui blockchain** with **Seal encryption**, the platform enables creators to Record voice datasets in various languages and dialects, which are encrypted and stored on **Walrus decentralized storage**. 
 
 **🚫 No Backend. No Servers. No Custody.** Everything runs on-chain and on decentralized infrastructure—there's no central server that can be shut down, no company holding your data, and no middleman taking cuts.
 
