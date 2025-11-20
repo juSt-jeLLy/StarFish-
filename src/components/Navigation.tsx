@@ -45,7 +45,9 @@ const Navigation = () => {
           </div>
 
           <div className="flex items-center gap-4">
-            <ConnectButton />
+            <ConnectButton 
+              className="bg-gradient-to-r from-primary to-secondary text-primary-foreground hover:from-primary/90 hover:to-secondary/90 pixel-border font-bold transition-all duration-200"
+            />
           </div>
         </div>
 
