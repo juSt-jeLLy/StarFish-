@@ -84,6 +84,113 @@ This is the **first voice data marketplace** that enforces quality through a **r
 
 **Zero centralized infrastructure** — the frontend is a static site that talks directly to the blockchain.
 
+---
+
+## 🔄 How It Works
+
+### Complete User Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           CREATOR FLOW                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1️⃣ ADD CATEGORIES (Permissionless - Anyone Can Add)                         │
+│     ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                    │
+│     │  Language   │───▶│   Dialect   │───▶│  Duration   │                    │
+│     │  (English)  │    │ (American)  │    │(30 seconds) │                    │
+│     └─────────────┘    └─────────────┘    └─────────────┘                    │
+│           │                                                                  │
+│           └──── 🎁 Language creator gets 20% OFF all purchases in that       │
+│                    language forever!                                         │
+│           │                                                                  │
+│           ▼                                                                  │
+│  2️⃣ RECORD VOICE (In-App Only)                                               │
+│     ┌─────────────────────────────────────┐                                  │
+│     │  📖 Read Sample Text                 │                                  │
+│     │  🎙️ Record via Browser Microphone    │                                  │
+│     │  👁️ See Waveform Visualization       │                                  │
+│     └─────────────────────────────────────┘                                  │
+│           │                                                                  │
+│           ▼                                                                  │
+│  3️⃣ ENCRYPT & UPLOAD                                                         │
+│     ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                    │
+│     │    Seal     │───▶│   Walrus    │───▶│     Sui     │                    │
+│     │  Encrypt    │    │   Upload    │    │  Publish    │                    │
+│     │  (Client)   │    │   (Blob)    │    │ (On-Chain)  │                    │
+│     └─────────────┘    └─────────────┘    └─────────────┘                    │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           BUYER FLOW                                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  4️⃣ BROWSE MARKETPLACE                                                       │
+│     ┌─────────────────────────────────────┐                                  │
+│     │  🔍 Filter by Language/Dialect       │                                  │
+│     │  💰 See Prices (Dynamic by Duration) │                                  │
+│     │  ⭐ Creator Discounts Displayed      │                                  │
+│     └─────────────────────────────────────┘                                  │
+│           │                                                                  │
+│           ▼                                                                  │
+│  5️⃣ PURCHASE SUBSCRIPTION                                                    │
+│     ┌─────────────┐         ┌─────────────┐                                  │
+│     │   Single    │   OR    │    Bulk     │                                  │
+│     │  Purchase   │         │  (2-10 at   │                                  │
+│     │ (1-365 days)│         │   once)     │                                  │
+│     └─────────────┘         └─────────────┘                                  │
+│           │                                                                  │
+│           ▼                                                                  │
+│     ┌─────────────────────────────────────┐                                  │
+│     │  💸 SUI Payment → Direct to Creator  │                                  │
+│     │  📜 Subscription NFT → Your Wallet   │                                  │
+│     └─────────────────────────────────────┘                                  │
+│           │                                                                  │
+│           ▼                                                                  │
+│  6️⃣ ACCESS DATA (While Subscription Active)                                  │
+│     ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                    │
+│     │   Verify    │───▶│   Fetch     │───▶│  Decrypt    │                    │
+│     │  On-Chain   │    │   Keys      │    │  & Download │                    │
+│     │(Seal Check) │    │  (Seal)     │    │   (Local)   │                    │
+│     └─────────────┘    └─────────────┘    └─────────────┘                    │
+│                                                                              │
+│  ⏰ Access expires after subscription period (1 day - 1 year)                 │
+│  🔄 Renew anytime to regain access                                           │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Step-by-Step Breakdown
+
+| Step | Action | Where | Who | Reward |
+|------|--------|-------|-----|--------|
+| 1 | Add Language + Sample Texts | Sui Blockchain | Anyone | 🎁 20% discount on that language |
+| 2 | Add Dialect to Language | Sui Blockchain | Anyone | — |
+| 3 | Create Duration Option | Sui Blockchain | Anyone | — |
+| 4 | Record Voice (read sample text) | Browser | Creator | — |
+| 5 | Encrypt Recording | Client-side (Seal) | Creator | — |
+| 6 | Upload Encrypted Blob | Walrus | Creator | — |
+| 7 | Publish Dataset to Marketplace | Sui Blockchain | Creator | Earn SUI from sales |
+| 8 | Browse & Filter Datasets | Frontend | Buyer | — |
+| 9 | Purchase Subscription (SUI) | Sui Blockchain | Buyer | Creator discount if applicable |
+| 10 | Receive Subscription NFT | Wallet | Buyer | — |
+| 11 | Request Decryption Keys | Seal Network | Buyer | — |
+| 12 | Download & Decrypt Locally | Client-side | Buyer | — |
+
+### Key Points
+
+- **Categories are permissionless** — Anyone can add new languages, dialects, and durations
+- **Category creators get rewarded** — If you add a language, you get **20% discount** on all purchases in that language forever
+- **Recording happens in-browser** — No file uploads, must record fresh
+- **Encryption is client-side** — Data is encrypted before leaving your device
+- **Payments are direct** — SUI goes straight to creator, no middleman
+- **Access is time-limited** — Subscription NFT controls access duration
+- **Bulk purchases available** — Buy 2-10 datasets in one transaction
+- **Decryption is local** — Only you can decrypt with valid subscription
+
+---
+
 ### Tech Stack
 
 | Component | Technology |
@@ -211,7 +318,7 @@ entry fun subscribe_bulk_3(
 ```bash
 # Clone the repository
 git clone <YOUR_GIT_URL>
-cd starfish-voice-marketplace
+cd StarFish-
 
 # Install dependencies
 npm install
