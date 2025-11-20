@@ -14,8 +14,8 @@ import { AudioRecorder, downloadAudio } from "@/utils/audioRecorder";
 import { toast } from "sonner";
 import spaceBg from "@/assets/space-bg.jpg";
 
-const PACKAGE_ID = "0xf02a406e6d8948b736b58d56cba64b89d1cd3b6d4af13355df44c8103e5b1a97";
-const REGISTRY_ID = "0x69d494bb468615cf21deb0620d9bcd0a1877892ea55754e0f50ce10aed5c943f";
+const PACKAGE_ID = "0xaeb46ee2312a97f98095b3dca0993790337ec0ec9fd0692dd4979a004f3d187c";
+const REGISTRY_ID = "0x6e63e83940043054c5e156b0e3c55f37dcb3f46d61986e0f4cf75d1e916df3a9";
 
 interface LanguageData {
   name: string;
@@ -406,10 +406,34 @@ const Record = () => {
     setPublishedDataset(null);
   };
 
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-12 h-12 text-primary animate-spin" />
+      <div className="min-h-screen relative overflow-hidden">
+        <div 
+          className="fixed inset-0 z-0"
+          style={{
+            backgroundImage: `url(${spaceBg})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundAttachment: 'fixed',
+          }}
+        />
+        
+        <div className="fixed inset-0 scanlines pointer-events-none z-10" />
+        
+        <Navigation />
+        
+        <div className="relative z-20 pt-24 pb-12 px-4">
+          <div className="container mx-auto max-w-6xl">
+            <h1 className="text-4xl md:text-6xl font-bold neon-text glitch text-center mb-12">
+              RECORD YOUR VOICE
+            </h1>
+            <div className="flex justify-center items-center py-20">
+              <Loader2 className="w-12 h-12 text-primary animate-spin" />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -903,7 +927,7 @@ Each paragraph will be a separate sample text for recording."
                         <dt className="text-muted-foreground font-semibold mb-2">Walrus Encrypted Blob</dt>
                         <dd className="text-foreground break-all font-mono text-xs mb-3 p-2 bg-background rounded">{publishedDataset.blobId}</dd>
                         <a
-                          href={`https://aggregator.walrus-testnet.walrus.space/v1/blobs/${publishedDataset.blobId}`}
+                          href={`https://walruscan.com/testnet/blob/${publishedDataset.blobId}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-secondary hover:text-secondary/80 underline font-semibold"

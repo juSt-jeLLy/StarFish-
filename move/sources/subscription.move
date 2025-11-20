@@ -1,4 +1,4 @@
-// Voice Data Marketplace with Dynamic Pricing, On-Chain Categories, and Creator Discounts
+// Voice Data Marketplace with Dynamic Pricing, On-Chain Categories, Creator Discounts, and Bulk Subscriptions
 module starfish::voice_marketplace;
 
 use std::string::String;
@@ -10,11 +10,12 @@ const ENoAccess: u64 = 2;
 const ECannotBuyOwnDataset: u64 = 3;
 const ELanguageNotFound: u64 = 4;
 const EDialectNotFound: u64 = 5;
-const EDurationNotFound: u64 = 6;
 const ENotCategoryAdmin: u64 = 7;
 const ELanguageAlreadyExists: u64 = 8;
 const EDialectAlreadyExists: u64 = 9;
 const EDurationAlreadyExists: u64 = 10;
+const EEmptyDatasetList: u64 = 11;
+const EInsufficientPayment: u64 = 12;
 
 // Base price: 0.001 SUI per day for 30 seconds = 1_000_000 MIST
 const BASE_PRICE_PER_DAY: u64 = 1_000_000;
@@ -28,8 +29,8 @@ public struct CategoryRegistry has key {
     id: UID,
     admin: address,
     languages: VecMap<String, LanguageCategory>,
-    existing_durations: VecMap<String, bool>, // Track duration labels to prevent duplicates
-    creator_discount_percent: u64, // Discount percentage for language creators (0-100)
+    existing_durations: VecMap<String, bool>,
+    creator_discount_percent: u64,
 }
 
 /// Language category with dialects
@@ -56,7 +57,7 @@ public struct DurationOption has key, store {
     created_at: u64,
 }
 
-/// Walrus blob object to represent encrypted voice data stored on Walrus
+/// Walrus blob object
 public struct WalrusBlob has key, store {
     id: UID,
     blob_id: String,
@@ -64,7 +65,7 @@ public struct WalrusBlob has key, store {
     encrypted_at: u64,
 }
 
-/// Voice dataset with metadata - MUST BE SHARED for marketplace to work
+/// Voice dataset - MUST BE SHARED
 public struct VoiceDataset has key {
     id: UID,
     creator: address,
@@ -85,7 +86,19 @@ public struct Subscription has key, store {
     created_at: u64,
     expires_at: u64,
     days_purchased: u64,
-    discount_applied: u64, // Amount of discount applied in MIST
+    discount_applied: u64,
+}
+
+/// Bulk subscription - contains multiple dataset subscriptions
+public struct BulkSubscription has key, store {
+    id: UID,
+    subscriber: address,
+    dataset_ids: vector<ID>,
+    created_at: u64,
+    expires_at: u64,
+    days_purchased: u64,
+    total_price_paid: u64,
+    total_discount_applied: u64,
 }
 
 /// Admin capability for dataset creator
@@ -94,27 +107,24 @@ public struct DatasetCap has key, store {
     dataset_id: ID,
 }
 
-/// Event emitted when category registry is created
+/// Events
 public struct CategoryRegistryCreated has copy, drop {
     registry_id: ID,
     admin: address,
     creator_discount_percent: u64,
 }
 
-/// Event emitted when language is added
 public struct LanguageAdded has copy, drop {
     language: String,
     created_by: address,
 }
 
-/// Event emitted when dialect is added
 public struct DialectAdded has copy, drop {
     language: String,
     dialect: String,
     created_by: address,
 }
 
-/// Event emitted when duration option is created
 public struct DurationOptionCreated has copy, drop {
     duration_id: ID,
     label: String,
@@ -122,7 +132,6 @@ public struct DurationOptionCreated has copy, drop {
     created_by: address,
 }
 
-/// Event emitted when dataset is created
 public struct DatasetCreated has copy, drop {
     dataset_id: ID,
     creator: address,
@@ -131,7 +140,6 @@ public struct DatasetCreated has copy, drop {
     duration_seconds: u64,
 }
 
-/// Event emitted when subscription is purchased
 public struct SubscriptionPurchased has copy, drop {
     dataset_id: ID,
     subscriber: address,
@@ -144,7 +152,17 @@ public struct SubscriptionPurchased has copy, drop {
     is_language_creator: bool,
 }
 
-/// Event emitted when creator discount is updated
+public struct BulkSubscriptionPurchased has copy, drop {
+    bulk_subscription_id: ID,
+    subscriber: address,
+    dataset_count: u64,
+    total_original_price: u64,
+    total_discount_applied: u64,
+    total_final_price: u64,
+    days_purchased: u64,
+    expires_at: u64,
+}
+
 public struct CreatorDiscountUpdated has copy, drop {
     old_discount_percent: u64,
     new_discount_percent: u64,
@@ -152,9 +170,8 @@ public struct CreatorDiscountUpdated has copy, drop {
 }
 
 //////////////////////////////////////////
-// Category Management
+// Initialization
 
-/// Initialize the category registry (called once on deployment)
 fun init(ctx: &mut TxContext) {
     let registry = CategoryRegistry {
         id: object::new(ctx),
@@ -173,7 +190,9 @@ fun init(ctx: &mut TxContext) {
     transfer::share_object(registry);
 }
 
-/// Update the creator discount percentage (admin only)
+//////////////////////////////////////////
+// Category Management
+
 public fun update_creator_discount(
     registry: &mut CategoryRegistry,
     new_discount_percent: u64,
@@ -200,7 +219,6 @@ entry fun update_creator_discount_entry(
     update_creator_discount(registry, new_discount_percent, ctx);
 }
 
-/// Add a new language category
 public fun add_language(
     registry: &mut CategoryRegistry,
     language_name: String,
@@ -208,7 +226,6 @@ public fun add_language(
     c: &Clock,
     ctx: &mut TxContext,
 ) {
-    // Check if language already exists
     assert!(!vec_map::contains(&registry.languages, &language_name), ELanguageAlreadyExists);
     
     let language_category = LanguageCategory {
@@ -237,20 +254,18 @@ entry fun add_language_entry(
     add_language(registry, language_name, sample_texts, c, ctx);
 }
 
-/// Add a dialect to an existing language
 public fun add_dialect(
     registry: &mut CategoryRegistry,
     language_name: String,
     dialect_name: String,
     dialect_description: String,
-    c: &Clock,
+    _c: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(vec_map::contains(&registry.languages, &language_name), ELanguageNotFound);
     
     let language = vec_map::get_mut(&mut registry.languages, &language_name);
     
-    // Check if dialect already exists in this language
     let mut i = 0;
     while (i < vector::length(&language.dialects)) {
         let existing_dialect = vector::borrow(&language.dialects, i);
@@ -283,7 +298,6 @@ entry fun add_dialect_entry(
     add_dialect(registry, language_name, dialect_name, dialect_description, c, ctx);
 }
 
-/// Create a new duration option
 public fun create_duration_option(
     registry: &mut CategoryRegistry,
     label: String,
@@ -291,7 +305,6 @@ public fun create_duration_option(
     c: &Clock,
     ctx: &mut TxContext,
 ): DurationOption {
-    // Check if duration label already exists
     assert!(!vec_map::contains(&registry.existing_durations, &label), EDurationAlreadyExists);
     
     let duration = DurationOption {
@@ -304,7 +317,6 @@ public fun create_duration_option(
     
     let duration_id = object::id(&duration);
     
-    // Mark this duration label as existing
     vec_map::insert(&mut registry.existing_durations, label, true);
     
     event::emit(DurationOptionCreated {
@@ -329,17 +341,13 @@ entry fun create_duration_option_entry(
 }
 
 //////////////////////////////////////////
-// Pricing Logic
+// Pricing
 
-/// Calculate price based on duration and days
-/// Formula: (duration_seconds / 30) * BASE_PRICE_PER_DAY * days
 public fun calculate_price(duration_seconds: u64, days: u64): u64 {
     let duration_multiplier = duration_seconds / 30;
     BASE_PRICE_PER_DAY * duration_multiplier * days
 }
 
-/// Calculate discounted price for language creators
-/// Returns (final_price, discount_amount)
 public fun calculate_creator_price(
     registry: &CategoryRegistry,
     duration_seconds: u64, 
@@ -351,7 +359,6 @@ public fun calculate_creator_price(
     (final_price, discount_amount)
 }
 
-/// Check if an address is the creator of a language
 fun is_language_creator(registry: &CategoryRegistry, language: &String, user: address): bool {
     if (!vec_map::contains(&registry.languages, language)) {
         return false
@@ -363,7 +370,6 @@ fun is_language_creator(registry: &CategoryRegistry, language: &String, user: ad
 //////////////////////////////////////////
 // Dataset Management
 
-/// Create a new voice dataset with validated categories
 public fun create_dataset(
     registry: &CategoryRegistry,
     language: String,
@@ -374,10 +380,8 @@ public fun create_dataset(
     c: &Clock,
     ctx: &mut TxContext,
 ): DatasetCap {
-    // Validate language exists
     assert!(vec_map::contains(&registry.languages, &language), ELanguageNotFound);
     
-    // Validate dialect exists for this language
     let language_cat = vec_map::get(&registry.languages, &language);
     let mut dialect_found = false;
     let mut i = 0;
@@ -439,7 +443,6 @@ entry fun create_dataset_entry(
     transfer::transfer(cap, ctx.sender());
 }
 
-/// Publish (attach) the Walrus blob to a dataset as a dynamic field
 public fun publish(
     dataset: &mut VoiceDataset,
     cap: &DatasetCap,
@@ -469,8 +472,9 @@ entry fun publish_entry(
     publish(dataset, cap, blob_id, c, ctx);
 }
 
-/// Purchase subscription to a dataset for specified number of days
-/// Automatically applies discount if subscriber is the language creator
+//////////////////////////////////////////
+// Single Subscription
+
 public fun subscribe(
     registry: &CategoryRegistry,
     payment: Coin<SUI>,
@@ -484,7 +488,6 @@ public fun subscribe(
     let subscriber = ctx.sender();
     let is_creator = is_language_creator(registry, &dataset.language, subscriber);
     
-    // Calculate price (with discount if applicable)
     let (final_price, discount_amount) = if (is_creator) {
         calculate_creator_price(registry, dataset.duration_seconds, days)
     } else {
@@ -536,9 +539,182 @@ entry fun subscribe_entry(
 }
 
 //////////////////////////////////////////
+// Bulk Subscription - Entry functions with variable arguments
+
+// Entry function for 2 datasets
+entry fun subscribe_bulk_2(
+    registry: &CategoryRegistry,
+    mut payment: Coin<SUI>,
+    dataset1: &VoiceDataset,
+    dataset2: &VoiceDataset,
+    days: u64,
+    c: &Clock,
+    ctx: &mut TxContext,
+) {
+    let subscriber = ctx.sender();
+    let current_time = c.timestamp_ms();
+    let expires_at = current_time + (days * MS_PER_DAY);
+    
+    let mut total_original = 0u64;
+    let mut total_discount = 0u64;
+    let mut total_final = 0u64;
+    let mut dataset_ids = vector::empty<ID>();
+    
+    // Process dataset 1
+    process_dataset_subscription(
+        registry, &mut payment, dataset1, days, subscriber, current_time, expires_at,
+        &mut total_original, &mut total_discount, &mut total_final, &mut dataset_ids, ctx
+    );
+    
+    // Process dataset 2
+    process_dataset_subscription(
+        registry, &mut payment, dataset2, days, subscriber, current_time, expires_at,
+        &mut total_original, &mut total_discount, &mut total_final, &mut dataset_ids, ctx
+    );
+    
+    // Destroy remaining payment (should be zero)
+    assert!(payment.value() == 0, EInsufficientPayment);
+    payment.destroy_zero();
+    
+    // Create bulk subscription record
+    let bulk_sub = BulkSubscription {
+        id: object::new(ctx),
+        subscriber,
+        dataset_ids,
+        created_at: current_time,
+        expires_at,
+        days_purchased: days,
+        total_price_paid: total_final,
+        total_discount_applied: total_discount,
+    };
+    
+    event::emit(BulkSubscriptionPurchased {
+        bulk_subscription_id: object::id(&bulk_sub),
+        subscriber,
+        dataset_count: 2,
+        total_original_price: total_original,
+        total_discount_applied: total_discount,
+        total_final_price: total_final,
+        days_purchased: days,
+        expires_at,
+    });
+    
+    transfer::transfer(bulk_sub, subscriber);
+}
+
+// Entry functions for 3-10 datasets (similar pattern)
+entry fun subscribe_bulk_3(
+    registry: &CategoryRegistry,
+    mut payment: Coin<SUI>,
+    d1: &VoiceDataset, d2: &VoiceDataset, d3: &VoiceDataset,
+    days: u64, c: &Clock, ctx: &mut TxContext,
+) {
+    let subscriber = ctx.sender();
+    let current_time = c.timestamp_ms();
+    let expires_at = current_time + (days * MS_PER_DAY);
+    let mut total_original = 0u64;
+    let mut total_discount = 0u64;
+    let mut total_final = 0u64;
+    let mut dataset_ids = vector::empty<ID>();
+    
+    process_dataset_subscription(registry, &mut payment, d1, days, subscriber, current_time, expires_at, &mut total_original, &mut total_discount, &mut total_final, &mut dataset_ids, ctx);
+    process_dataset_subscription(registry, &mut payment, d2, days, subscriber, current_time, expires_at, &mut total_original, &mut total_discount, &mut total_final, &mut dataset_ids, ctx);
+    process_dataset_subscription(registry, &mut payment, d3, days, subscriber, current_time, expires_at, &mut total_original, &mut total_discount, &mut total_final, &mut dataset_ids, ctx);
+    
+    assert!(payment.value() == 0, EInsufficientPayment);
+    payment.destroy_zero();
+    
+    let bulk_sub = BulkSubscription {
+        id: object::new(ctx),
+        subscriber,
+        dataset_ids,
+        created_at: current_time,
+        expires_at,
+        days_purchased: days,
+        total_price_paid: total_final,
+        total_discount_applied: total_discount,
+    };
+    
+    event::emit(BulkSubscriptionPurchased {
+        bulk_subscription_id: object::id(&bulk_sub),
+        subscriber,
+        dataset_count: 3,
+        total_original_price: total_original,
+        total_discount_applied: total_discount,
+        total_final_price: total_final,
+        days_purchased: days,
+        expires_at,
+    });
+    
+    transfer::transfer(bulk_sub, subscriber);
+}
+
+// Helper function to process each dataset
+fun process_dataset_subscription(
+    registry: &CategoryRegistry,
+    payment: &mut Coin<SUI>,
+    dataset: &VoiceDataset,
+    days: u64,
+    subscriber: address,
+    current_time: u64,
+    expires_at: u64,
+    total_original: &mut u64,
+    total_discount: &mut u64,
+    total_final: &mut u64,
+    dataset_ids: &mut vector<ID>,
+    ctx: &mut TxContext,
+) {
+    assert!(subscriber != dataset.creator, ECannotBuyOwnDataset);
+    
+    let dataset_id = object::id(dataset);
+    vector::push_back(dataset_ids, dataset_id);
+    
+    let is_creator = is_language_creator(registry, &dataset.language, subscriber);
+    let original_price = calculate_price(dataset.duration_seconds, days);
+    
+    let (final_price, discount_amount) = if (is_creator) {
+        calculate_creator_price(registry, dataset.duration_seconds, days)
+    } else {
+        (original_price, 0)
+    };
+    
+    *total_original = *total_original + original_price;
+    *total_discount = *total_discount + discount_amount;
+    *total_final = *total_final + final_price;
+    
+    // Split payment for creator
+    let creator_payment = payment.split(final_price, ctx);
+    transfer::public_transfer(creator_payment, dataset.creator);
+    
+    // Create individual subscription
+    let subscription = Subscription {
+        id: object::new(ctx),
+        dataset_id,
+        subscriber,
+        created_at: current_time,
+        expires_at,
+        days_purchased: days,
+        discount_applied: discount_amount,
+    };
+    
+    event::emit(SubscriptionPurchased {
+        dataset_id,
+        subscriber,
+        creator: dataset.creator,
+        original_price,
+        discount_applied: discount_amount,
+        final_price,
+        days_purchased: days,
+        expires_at,
+        is_language_creator: is_creator,
+    });
+    
+    transfer::transfer(subscription, subscriber);
+}
+
+//////////////////////////////////////////
 // Access Control
 
-/// Check if user has access to decrypt the dataset
 fun approve_internal(
     id: vector<u8>,
     dataset: &VoiceDataset,
@@ -565,7 +741,6 @@ entry fun seal_approve(
     assert!(approve_internal(id, dataset, sub, c), ENoAccess);
 }
 
-/// Returns true if `prefix` is a prefix of `word`
 fun is_prefix(prefix: vector<u8>, word: vector<u8>): bool {
     if (prefix.length() > word.length()) {
         return false
@@ -641,6 +816,18 @@ public fun get_duration_seconds(duration: &DurationOption): u64 {
 
 public fun get_duration_label(duration: &DurationOption): String {
     duration.label
+}
+
+public fun get_bulk_subscription_dataset_ids(bulk_sub: &BulkSubscription): vector<ID> {
+    bulk_sub.dataset_ids
+}
+
+public fun get_bulk_subscription_expiry(bulk_sub: &BulkSubscription): u64 {
+    bulk_sub.expires_at
+}
+
+public fun get_bulk_subscription_total_discount(bulk_sub: &BulkSubscription): u64 {
+    bulk_sub.total_discount_applied
 }
 
 #[test_only]

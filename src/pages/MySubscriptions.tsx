@@ -3,14 +3,14 @@ import { useCurrentAccount, useSuiClient, useSignPersonalMessage } from "@mysten
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Database, Download, Loader2, Clock, AlertCircle, Filter, X, Languages } from "lucide-react";
-import Navigation from "@/components/Navigation";
-import spaceBg from "@/assets/space-bg.jpg";
 import { SealClient, SessionKey } from '@mysten/seal';
 import { Transaction } from '@mysten/sui/transactions';
 import { fromHex, toHex } from '@mysten/sui/utils';
 import { toast } from "sonner";
+import Navigation from "@/components/Navigation";
+import spaceBg from "@/assets/space-bg.jpg";
 
-const PACKAGE_ID = "0xf02a406e6d8948b736b58d56cba64b89d1cd3b6d4af13355df44c8103e5b1a97";
+const PACKAGE_ID = "0xaeb46ee2312a97f98095b3dca0993790337ec0ec9fd0692dd4979a004f3d187c";
 const SERVER_OBJECT_IDS = [
   "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
   "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
@@ -31,6 +31,7 @@ interface SubscriptionData {
   encryptionId: string;
   isExpired: boolean;
   timeRemaining: string;
+  discountApplied: number;
 }
 
 interface LanguageData {
@@ -47,7 +48,6 @@ const MySubscriptions = () => {
   const [sessionKey, setSessionKey] = useState<SessionKey | null>(null);
   const { mutate: signPersonalMessage } = useSignPersonalMessage();
   
-  // Filter states
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [selectedDialect, setSelectedDialect] = useState<string>("");
   const [showExpired, setShowExpired] = useState<boolean>(true);
@@ -77,6 +77,10 @@ const MySubscriptions = () => {
     return `${minutes}m remaining`;
   };
 
+  const formatPrice = (mist: number): string => {
+    return (mist / 1_000_000_000).toFixed(4);
+  };
+
   useEffect(() => {
     if (currentAccount?.address) {
       loadSubscriptions();
@@ -89,7 +93,8 @@ const MySubscriptions = () => {
     if (!currentAccount?.address) return;
 
     try {
-      const result = await suiClient.getOwnedObjects({
+      // Load single subscriptions only
+      const singleSubs = await suiClient.getOwnedObjects({
         owner: currentAccount.address,
         options: { showContent: true, showType: true },
         filter: {
@@ -98,16 +103,13 @@ const MySubscriptions = () => {
       });
 
       const subsData: SubscriptionData[] = await Promise.all(
-        result.data.map(async (obj) => {
+        singleSubs.data.map(async (obj) => {
           const fields = (obj.data?.content as any)?.fields;
           if (!fields) return null;
 
           const dataset = await suiClient.getObject({
             id: fields.dataset_id,
-            options: { 
-              showContent: true,
-              showBcs: true,
-            },
+            options: { showContent: true, showBcs: true },
           });
 
           const datasetFields = (dataset.data?.content as any)?.fields;
@@ -121,7 +123,6 @@ const MySubscriptions = () => {
             return null;
           }
 
-          const blobId = datasetFields.blob_id;
           const expiresAt = parseInt(fields.expires_at);
           const isExpired = Date.now() > expiresAt;
 
@@ -133,27 +134,25 @@ const MySubscriptions = () => {
             daysPurchased: parseInt(fields.days_purchased),
             language: datasetFields.language,
             dialect: datasetFields.dialect,
-            durationLabel: datasetFields.duration_label, // Use on-chain label
+            durationLabel: datasetFields.duration_label,
             durationSeconds: parseInt(datasetFields.duration_seconds),
-            blobId,
+            blobId: datasetFields.blob_id,
             encryptionId,
             isExpired,
             timeRemaining: getTimeRemaining(expiresAt),
+            discountApplied: parseInt(fields.discount_applied || "0"),
           };
         })
       );
 
       const validSubs = subsData.filter(Boolean) as SubscriptionData[];
-      
-      // Sort: active first, then by expiry date
       validSubs.sort((a, b) => {
         if (a.isExpired !== b.isExpired) return a.isExpired ? 1 : -1;
         return a.expiresAt - b.expiresAt;
       });
-      
       setSubscriptions(validSubs);
 
-      // Extract unique languages and their dialects
+      // Extract languages
       const languageMap = new Map<string, Set<string>>();
       validSubs.forEach(sub => {
         if (!languageMap.has(sub.language)) {
@@ -220,7 +219,6 @@ const MySubscriptions = () => {
       if (!response.ok) throw new Error("Failed to download from Walrus");
       
       const encryptedData = new Uint8Array(await response.arrayBuffer());
-
       const idBytes = fromHex(sub.encryptionId);
       
       const tx = new Transaction();
@@ -274,12 +272,6 @@ const MySubscriptions = () => {
     }
   };
 
-  const handleRefresh = () => {
-    setLoading(true);
-    loadSubscriptions();
-  };
-
-  // Filter subscriptions
   const filteredSubscriptions = subscriptions.filter(sub => {
     if (!showExpired && sub.isExpired) return false;
     if (selectedLanguage && sub.language !== selectedLanguage) return false;
@@ -287,14 +279,13 @@ const MySubscriptions = () => {
     return true;
   });
 
-  // Get dialects for selected language
   const availableDialects = selectedLanguage 
     ? availableLanguages.find(l => l.name === selectedLanguage)?.dialects || []
     : [];
 
-  // Statistics
   const activeCount = subscriptions.filter(s => !s.isExpired).length;
   const expiredCount = subscriptions.filter(s => s.isExpired).length;
+  const totalCount = subscriptions.length;
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -314,21 +305,12 @@ const MySubscriptions = () => {
 
       <div className="relative z-20 pt-24 pb-12 px-4">
         <div className="container mx-auto max-w-6xl">
-          <div className="flex justify-between items-center mb-8">
-            <h1 className="text-4xl md:text-6xl font-bold neon-text glitch">
-              MY SUBSCRIPTIONS
-            </h1>
-            <Button 
-              onClick={handleRefresh}
-              disabled={loading}
-              className="bg-primary hover:bg-primary/90 font-bold pixel-border"
-            >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Refresh'}
-            </Button>
-          </div>
+          <h1 className="text-4xl md:text-6xl font-bold neon-text glitch text-center mb-12">
+            MY SUBSCRIPTIONS
+          </h1>
 
           {!currentAccount ? (
-            <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
+            <Card className="p-8 text-center neon-border bg-card/80 backdrop-blur">
               <p className="text-xl text-primary">
                 Please connect your wallet to view subscriptions
               </p>
@@ -338,7 +320,7 @@ const MySubscriptions = () => {
               <Loader2 className="w-12 h-12 text-primary animate-spin" />
             </div>
           ) : subscriptions.length === 0 ? (
-            <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
+            <Card className="p-8 text-center neon-border bg-card/80 backdrop-blur">
               <Database className="w-16 h-16 text-secondary mx-auto mb-4" />
               <p className="text-xl text-primary mb-2">No Subscriptions Yet</p>
               <p className="text-muted-foreground">
@@ -347,12 +329,12 @@ const MySubscriptions = () => {
             </Card>
           ) : (
             <>
-              {/* Statistics Bar */}
+              {/* Simplified Statistics - Only 3 cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 <Card className="p-4 neon-border bg-card/80 backdrop-blur">
                   <div className="text-center">
-                    <p className="text-3xl font-bold text-accent">{subscriptions.length}</p>
-                    <p className="text-sm text-muted-foreground">Total Subscriptions</p>
+                    <p className="text-3xl font-bold text-accent">{totalCount}</p>
+                    <p className="text-sm text-muted-foreground">Total</p>
                   </div>
                 </Card>
                 <Card className="p-4 neon-border bg-card/80 backdrop-blur">
@@ -370,16 +352,14 @@ const MySubscriptions = () => {
               </div>
 
               {/* Filters */}
-              <Card className="p-6 neon-border bg-card/80 backdrop-blur mb-8">
+              <Card className="p-6 mb-8 neon-border bg-card/80 backdrop-blur">
                 <div className="space-y-4">
-                  {/* Status Filter */}
                   <div className="flex items-center gap-4 flex-wrap">
                     <Filter className="w-6 h-6 text-primary" />
                     <span className="text-lg font-bold text-primary">Status:</span>
                     <Button
                       variant={showExpired ? "default" : "outline"}
                       onClick={() => setShowExpired(true)}
-                      className="pixel-border"
                       size="sm"
                     >
                       Show All
@@ -387,14 +367,12 @@ const MySubscriptions = () => {
                     <Button
                       variant={!showExpired ? "default" : "outline"}
                       onClick={() => setShowExpired(false)}
-                      className="pixel-border"
                       size="sm"
                     >
                       Active Only
                     </Button>
                   </div>
 
-                  {/* Language Filter */}
                   {availableLanguages.length > 1 && (
                     <div className="flex items-center gap-4 flex-wrap border-t border-primary/20 pt-4">
                       <Languages className="w-6 h-6 text-secondary" />
@@ -405,7 +383,6 @@ const MySubscriptions = () => {
                           setSelectedLanguage("");
                           setSelectedDialect("");
                         }}
-                        className="pixel-border"
                         size="sm"
                       >
                         All Languages
@@ -418,7 +395,6 @@ const MySubscriptions = () => {
                             setSelectedLanguage(lang.name);
                             setSelectedDialect("");
                           }}
-                          className="pixel-border"
                           size="sm"
                         >
                           {lang.name}
@@ -427,15 +403,13 @@ const MySubscriptions = () => {
                     </div>
                   )}
 
-                  {/* Dialect Filter */}
                   {selectedLanguage && availableDialects.length > 1 && (
-                    <div className="flex items-center gap-4 flex-wrap border-t border-secondary/20 pt-4 animate-slide-in">
+                    <div className="flex items-center gap-4 flex-wrap border-t border-secondary/20 pt-4">
                       <Clock className="w-6 h-6 text-accent" />
                       <span className="text-lg font-bold text-accent">Dialect:</span>
                       <Button
                         variant={selectedDialect === "" ? "default" : "outline"}
                         onClick={() => setSelectedDialect("")}
-                        className="pixel-border"
                         size="sm"
                       >
                         All Dialects
@@ -445,7 +419,6 @@ const MySubscriptions = () => {
                           key={dialect}
                           variant={selectedDialect === dialect ? "default" : "outline"}
                           onClick={() => setSelectedDialect(dialect)}
-                          className="pixel-border"
                           size="sm"
                         >
                           {dialect}
@@ -453,149 +426,76 @@ const MySubscriptions = () => {
                       ))}
                     </div>
                   )}
-
-                  {/* Active Filters Display */}
-                  {(selectedLanguage || selectedDialect || !showExpired) && (
-                    <div className="border-t border-primary/20 pt-4">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm text-muted-foreground">Active filters:</span>
-                        {!showExpired && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => setShowExpired(true)}
-                            className="h-7 text-xs"
-                          >
-                            Active Only
-                            <X className="w-3 h-3 ml-1" />
-                          </Button>
-                        )}
-                        {selectedLanguage && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedLanguage("");
-                              setSelectedDialect("");
-                            }}
-                            className="h-7 text-xs"
-                          >
-                            {selectedLanguage}
-                            <X className="w-3 h-3 ml-1" />
-                          </Button>
-                        )}
-                        {selectedDialect && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => setSelectedDialect("")}
-                            className="h-7 text-xs"
-                          >
-                            {selectedDialect}
-                            <X className="w-3 h-3 ml-1" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </Card>
 
-              {/* Subscriptions Grid */}
-              {filteredSubscriptions.length === 0 ? (
-                <Card className="p-8 neon-border bg-card/80 backdrop-blur text-center">
-                  <Database className="w-16 h-16 text-secondary mx-auto mb-4" />
-                  <p className="text-xl text-primary mb-2">No Subscriptions Found</p>
-                  <p className="text-muted-foreground mb-4">
-                    Try adjusting your filters
-                  </p>
-                  <Button
-                    onClick={() => {
-                      setSelectedLanguage("");
-                      setSelectedDialect("");
-                      setShowExpired(true);
-                    }}
-                    className="bg-primary hover:bg-primary/90"
-                  >
-                    Clear All Filters
-                  </Button>
-                </Card>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filteredSubscriptions.map((sub) => (
-                      <Card
-                        key={sub.id}
-                        className={`p-6 neon-border bg-card/80 backdrop-blur hover-lift transition-all ${
-                          sub.isExpired ? 'opacity-60' : ''
-                        }`}
-                      >
-                        {sub.isExpired && (
-                          <div className="mb-4 p-2 bg-destructive/20 border border-destructive rounded flex items-center gap-2">
-                            <AlertCircle className="w-4 h-4 text-destructive" />
-                            <span className="text-xs text-destructive font-bold">EXPIRED</span>
-                          </div>
-                        )}
-                        
-                        <div className="mb-4">
-                          <h3 className="text-xl font-bold text-primary mb-2">
-                            {sub.language} - {sub.dialect}
-                          </h3>
-                          <div className="space-y-1 text-sm text-muted-foreground">
-                            <p>Duration: {sub.durationLabel}</p>
-                            <p>Purchased: {new Date(sub.createdAt).toLocaleDateString()}</p>
-                            <p>For: {sub.daysPurchased} day{sub.daysPurchased !== 1 ? 's' : ''}</p>
-                            <div className="flex items-center gap-2 mt-2">
-                              <Clock className="w-4 h-4" />
-                              <span className={`font-bold ${
-                                sub.isExpired ? 'text-destructive' : 'text-accent'
-                              }`}>
-                                {sub.timeRemaining}
-                              </span>
-                            </div>
-                            <p className="text-xs break-all mt-2 opacity-70">
-                              ID: {sub.encryptionId.slice(0, 16)}...
+              {/* Individual Subscriptions Only - No Bulk Section */}
+              <div>
+                <h2 className="text-2xl font-bold text-primary mb-4">
+                  Your Subscriptions ({filteredSubscriptions.length})
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredSubscriptions.map((sub) => (
+                    <Card
+                      key={sub.id}
+                      className={`p-6 transition-all neon-border bg-card/80 backdrop-blur ${sub.isExpired ? 'opacity-60' : ''}`}
+                    >
+                      {sub.isExpired && (
+                        <div className="mb-4 p-2 bg-destructive/20 border border-destructive rounded flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-destructive" />
+                          <span className="text-xs text-destructive font-bold">EXPIRED</span>
+                        </div>
+                      )}
+                      
+                      <div className="mb-4">
+                        <h3 className="text-xl font-bold text-primary mb-2">
+                          {sub.language} - {sub.dialect}
+                        </h3>
+                        <div className="space-y-1 text-sm text-muted-foreground">
+                          <p>Duration: {sub.durationLabel}</p>
+                          <p>Purchased: {new Date(sub.createdAt).toLocaleDateString()}</p>
+                          <p>For: {sub.daysPurchased} day{sub.daysPurchased !== 1 ? 's' : ''}</p>
+                          {sub.discountApplied > 0 && (
+                            <p className="text-accent font-bold">
+                              Discount: {formatPrice(sub.discountApplied)} SUI
                             </p>
+                          )}
+                          <div className="flex items-center gap-2 mt-2">
+                            <Clock className="w-4 h-4" />
+                            <span className={`font-bold ${sub.isExpired ? 'text-destructive' : 'text-accent'}`}>
+                              {sub.timeRemaining}
+                            </span>
                           </div>
                         </div>
+                      </div>
 
-                        <Button
-                          onClick={() => handleDownload(sub)}
-                          disabled={downloading === sub.id || sub.isExpired}
-                          className={`w-full font-bold pixel-border ${
-                            sub.isExpired 
-                              ? 'bg-gray-500 opacity-50 cursor-not-allowed' 
-                              : 'bg-gradient-to-r from-primary to-secondary text-background hover:opacity-90'
-                          }`}
-                        >
-                          {downloading === sub.id ? (
-                            <>
-                              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                              DOWNLOADING...
-                            </>
-                          ) : sub.isExpired ? (
-                            'EXPIRED - RENEW TO ACCESS'
-                          ) : (
-                            <>
-                              <Download className="w-5 h-5 mr-2" />
-                              DOWNLOAD
-                            </>
-                          )}
-                        </Button>
-                      </Card>
-                    ))}
-                  </div>
-
-                  {/* Results Summary */}
-                  <div className="flex justify-center gap-4 mt-8">
-                    <div className="text-center text-muted-foreground">
-                      <p className="text-sm">
-                        Showing {filteredSubscriptions.length} of {subscriptions.length} subscription{subscriptions.length !== 1 ? 's' : ''}
-                      </p>
-                    </div>
-                  </div>
-                </>
-              )}
+                      <Button
+                        onClick={() => handleDownload(sub)}
+                        disabled={downloading === sub.id || sub.isExpired}
+                        className={`w-full font-bold ${
+                          sub.isExpired 
+                            ? 'bg-gray-500 opacity-50 cursor-not-allowed' 
+                            : 'bg-gradient-to-r from-primary to-secondary text-background'
+                        }`}
+                      >
+                        {downloading === sub.id ? (
+                          <>
+                            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                            DOWNLOADING...
+                          </>
+                        ) : sub.isExpired ? (
+                          'EXPIRED - RENEW TO ACCESS'
+                        ) : (
+                          <>
+                            <Download className="w-5 h-5 mr-2" />
+                            DOWNLOAD
+                          </>
+                        )}
+                      </Button>
+                    </Card>
+                  ))}
+                </div>
+              </div>
             </>
           )}
         </div>
