@@ -2,11 +2,13 @@ import { useState, useEffect } from "react";
 import { useCurrentAccount, useSuiClient, useSignPersonalMessage } from "@mysten/dapp-kit";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, Download, Loader2, Clock, AlertCircle, Filter, X, Languages, Package } from "lucide-react";
+import { Database, Download, Loader2, Clock, AlertCircle, Filter, X, Languages } from "lucide-react";
 import { SealClient, SessionKey } from '@mysten/seal';
 import { Transaction } from '@mysten/sui/transactions';
 import { fromHex, toHex } from '@mysten/sui/utils';
 import { toast } from "sonner";
+import Navigation from "@/components/Navigation";
+import spaceBg from "@/assets/space-bg.jpg";
 
 const PACKAGE_ID = "0xaeb46ee2312a97f98095b3dca0993790337ec0ec9fd0692dd4979a004f3d187c";
 const SERVER_OBJECT_IDS = [
@@ -32,19 +34,6 @@ interface SubscriptionData {
   discountApplied: number;
 }
 
-interface BulkSubscriptionData {
-  id: string;
-  createdAt: number;
-  expiresAt: number;
-  daysPurchased: number;
-  datasetCount: number;
-  totalDiscount: number;
-  totalPrice: number;
-  isExpired: boolean;
-  timeRemaining: string;
-  subscriptions: SubscriptionData[];
-}
-
 interface LanguageData {
   name: string;
   dialects: string[];
@@ -54,7 +43,6 @@ const MySubscriptions = () => {
   const currentAccount = useCurrentAccount();
   const suiClient = useSuiClient();
   const [subscriptions, setSubscriptions] = useState<SubscriptionData[]>([]);
-  const [bulkSubscriptions, setBulkSubscriptions] = useState<BulkSubscriptionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState<SessionKey | null>(null);
@@ -63,9 +51,7 @@ const MySubscriptions = () => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("");
   const [selectedDialect, setSelectedDialect] = useState<string>("");
   const [showExpired, setShowExpired] = useState<boolean>(true);
-  const [viewMode, setViewMode] = useState<'all' | 'single' | 'bulk'>('all');
   const [availableLanguages, setAvailableLanguages] = useState<LanguageData[]>([]);
-  const [expandedBulk, setExpandedBulk] = useState<Set<string>>(new Set());
 
   const client = new SealClient({
     suiClient,
@@ -107,7 +93,7 @@ const MySubscriptions = () => {
     if (!currentAccount?.address) return;
 
     try {
-      // Load single subscriptions
+      // Load single subscriptions only
       const singleSubs = await suiClient.getOwnedObjects({
         owner: currentAccount.address,
         options: { showContent: true, showType: true },
@@ -165,55 +151,6 @@ const MySubscriptions = () => {
         return a.expiresAt - b.expiresAt;
       });
       setSubscriptions(validSubs);
-
-      // Load bulk subscriptions
-      const bulkSubs = await suiClient.getOwnedObjects({
-        owner: currentAccount.address,
-        options: { showContent: true, showType: true },
-        filter: {
-          StructType: `${PACKAGE_ID}::voice_marketplace::BulkSubscription`,
-        },
-      });
-
-      const bulkData: BulkSubscriptionData[] = await Promise.all(
-        bulkSubs.data.map(async (obj) => {
-          const fields = (obj.data?.content as any)?.fields;
-          if (!fields) return null;
-
-          const datasetIds = fields.dataset_ids;
-          const expiresAt = parseInt(fields.expires_at);
-          const isExpired = Date.now() > expiresAt;
-
-          // Load all subscriptions in this bulk
-          const bulkSubsList: SubscriptionData[] = [];
-          for (const datasetId of datasetIds) {
-            const sub = validSubs.find(s => s.datasetId === datasetId);
-            if (sub) {
-              bulkSubsList.push(sub);
-            }
-          }
-
-          return {
-            id: obj.data.objectId,
-            createdAt: parseInt(fields.created_at),
-            expiresAt,
-            daysPurchased: parseInt(fields.days_purchased),
-            datasetCount: datasetIds.length,
-            totalDiscount: parseInt(fields.total_discount_applied),
-            totalPrice: parseInt(fields.total_price_paid),
-            isExpired,
-            timeRemaining: getTimeRemaining(expiresAt),
-            subscriptions: bulkSubsList,
-          };
-        })
-      );
-
-      const validBulk = bulkData.filter(Boolean) as BulkSubscriptionData[];
-      validBulk.sort((a, b) => {
-        if (a.isExpired !== b.isExpired) return a.isExpired ? 1 : -1;
-        return a.expiresAt - b.expiresAt;
-      });
-      setBulkSubscriptions(validBulk);
 
       // Extract languages
       const languageMap = new Map<string, Set<string>>();
@@ -335,32 +272,10 @@ const MySubscriptions = () => {
     }
   };
 
-  const toggleBulkExpand = (bulkId: string) => {
-    const newExpanded = new Set(expandedBulk);
-    if (newExpanded.has(bulkId)) {
-      newExpanded.delete(bulkId);
-    } else {
-      newExpanded.add(bulkId);
-    }
-    setExpandedBulk(newExpanded);
-  };
-
   const filteredSubscriptions = subscriptions.filter(sub => {
     if (!showExpired && sub.isExpired) return false;
     if (selectedLanguage && sub.language !== selectedLanguage) return false;
     if (selectedDialect && sub.dialect !== selectedDialect) return false;
-    return true;
-  });
-
-  const filteredBulkSubscriptions = bulkSubscriptions.filter(bulk => {
-    if (!showExpired && bulk.isExpired) return false;
-    if (selectedLanguage || selectedDialect) {
-      return bulk.subscriptions.some(sub => {
-        if (selectedLanguage && sub.language !== selectedLanguage) return false;
-        if (selectedDialect && sub.dialect !== selectedDialect) return false;
-        return true;
-      });
-    }
     return true;
   });
 
@@ -370,282 +285,160 @@ const MySubscriptions = () => {
 
   const activeCount = subscriptions.filter(s => !s.isExpired).length;
   const expiredCount = subscriptions.filter(s => s.isExpired).length;
-  const activeBulkCount = bulkSubscriptions.filter(b => !b.isExpired).length;
-
-  const displaySubscriptions = viewMode === 'single' ? filteredSubscriptions : 
-                              viewMode === 'bulk' ? [] : filteredSubscriptions;
-  const displayBulk = viewMode === 'single' ? [] : filteredBulkSubscriptions;
+  const totalCount = subscriptions.length;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-background/80 p-8">
-      <div className="container mx-auto max-w-6xl">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl md:text-6xl font-bold">
+    <div className="min-h-screen relative overflow-hidden">
+      <div 
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: `url(${spaceBg})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundAttachment: 'fixed',
+        }}
+      />
+      
+      <div className="fixed inset-0 scanlines pointer-events-none z-10" />
+      
+      <Navigation />
+
+      <div className="relative z-20 pt-24 pb-12 px-4">
+        <div className="container mx-auto max-w-6xl">
+          <h1 className="text-4xl md:text-6xl font-bold neon-text glitch text-center mb-12">
             MY SUBSCRIPTIONS
           </h1>
-          <Button 
-            onClick={() => {
-              setLoading(true);
-              loadSubscriptions();
-            }}
-            disabled={loading}
-            className="font-bold"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Refresh'}
-          </Button>
-        </div>
 
-        {!currentAccount ? (
-          <Card className="p-8 text-center">
-            <p className="text-xl text-primary">
-              Please connect your wallet to view subscriptions
-            </p>
-          </Card>
-        ) : loading ? (
-          <div className="flex justify-center items-center py-20">
-            <Loader2 className="w-12 h-12 text-primary animate-spin" />
-          </div>
-        ) : subscriptions.length === 0 && bulkSubscriptions.length === 0 ? (
-          <Card className="p-8 text-center">
-            <Database className="w-16 h-16 text-secondary mx-auto mb-4" />
-            <p className="text-xl text-primary mb-2">No Subscriptions Yet</p>
-            <p className="text-muted-foreground">
-              Purchase voice datasets from the marketplace to access them here
-            </p>
-          </Card>
-        ) : (
-          <>
-            {/* Statistics */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <Card className="p-4">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-accent">{subscriptions.length}</p>
-                  <p className="text-sm text-muted-foreground">Total Single</p>
-                </div>
-              </Card>
-              <Card className="p-4">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-accent">{bulkSubscriptions.length}</p>
-                  <p className="text-sm text-muted-foreground">Total Bulk</p>
-                </div>
-              </Card>
-              <Card className="p-4">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-primary">{activeCount + activeBulkCount}</p>
-                  <p className="text-sm text-muted-foreground">Active</p>
-                </div>
-              </Card>
-              <Card className="p-4">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-destructive">{expiredCount}</p>
-                  <p className="text-sm text-muted-foreground">Expired</p>
-                </div>
-              </Card>
-            </div>
-
-            {/* View Mode Toggle */}
-            <Card className="p-4 mb-6">
-              <div className="flex items-center gap-4 flex-wrap">
-                <span className="text-sm font-bold">View:</span>
-                <Button
-                  variant={viewMode === 'all' ? "default" : "outline"}
-                  onClick={() => setViewMode('all')}
-                  size="sm"
-                >
-                  All
-                </Button>
-                <Button
-                  variant={viewMode === 'single' ? "default" : "outline"}
-                  onClick={() => setViewMode('single')}
-                  size="sm"
-                >
-                  Single Only
-                </Button>
-                <Button
-                  variant={viewMode === 'bulk' ? "default" : "outline"}
-                  onClick={() => setViewMode('bulk')}
-                  size="sm"
-                >
-                  Bulk Only
-                </Button>
-              </div>
+          {!currentAccount ? (
+            <Card className="p-8 text-center neon-border bg-card/80 backdrop-blur">
+              <p className="text-xl text-primary">
+                Please connect your wallet to view subscriptions
+              </p>
             </Card>
+          ) : loading ? (
+            <div className="flex justify-center items-center py-20">
+              <Loader2 className="w-12 h-12 text-primary animate-spin" />
+            </div>
+          ) : subscriptions.length === 0 ? (
+            <Card className="p-8 text-center neon-border bg-card/80 backdrop-blur">
+              <Database className="w-16 h-16 text-secondary mx-auto mb-4" />
+              <p className="text-xl text-primary mb-2">No Subscriptions Yet</p>
+              <p className="text-muted-foreground">
+                Purchase voice datasets from the marketplace to access them here
+              </p>
+            </Card>
+          ) : (
+            <>
+              {/* Simplified Statistics - Only 3 cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <Card className="p-4 neon-border bg-card/80 backdrop-blur">
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-accent">{totalCount}</p>
+                    <p className="text-sm text-muted-foreground">Total</p>
+                  </div>
+                </Card>
+                <Card className="p-4 neon-border bg-card/80 backdrop-blur">
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-primary">{activeCount}</p>
+                    <p className="text-sm text-muted-foreground">Active</p>
+                  </div>
+                </Card>
+                <Card className="p-4 neon-border bg-card/80 backdrop-blur">
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-destructive">{expiredCount}</p>
+                    <p className="text-sm text-muted-foreground">Expired</p>
+                  </div>
+                </Card>
+              </div>
 
-            {/* Filters */}
-            <Card className="p-6 mb-8">
-              <div className="space-y-4">
-                <div className="flex items-center gap-4 flex-wrap">
-                  <Filter className="w-6 h-6 text-primary" />
-                  <span className="text-lg font-bold text-primary">Status:</span>
-                  <Button
-                    variant={showExpired ? "default" : "outline"}
-                    onClick={() => setShowExpired(true)}
-                    size="sm"
-                  >
-                    Show All
-                  </Button>
-                  <Button
-                    variant={!showExpired ? "default" : "outline"}
-                    onClick={() => setShowExpired(false)}
-                    size="sm"
-                  >
-                    Active Only
-                  </Button>
-                </div>
-
-                {availableLanguages.length > 1 && (
-                  <div className="flex items-center gap-4 flex-wrap border-t border-primary/20 pt-4">
-                    <Languages className="w-6 h-6 text-secondary" />
-                    <span className="text-lg font-bold text-secondary">Language:</span>
+              {/* Filters */}
+              <Card className="p-6 mb-8 neon-border bg-card/80 backdrop-blur">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <Filter className="w-6 h-6 text-primary" />
+                    <span className="text-lg font-bold text-primary">Status:</span>
                     <Button
-                      variant={selectedLanguage === "" ? "default" : "outline"}
-                      onClick={() => {
-                        setSelectedLanguage("");
-                        setSelectedDialect("");
-                      }}
+                      variant={showExpired ? "default" : "outline"}
+                      onClick={() => setShowExpired(true)}
                       size="sm"
                     >
-                      All Languages
+                      Show All
                     </Button>
-                    {availableLanguages.map(lang => (
+                    <Button
+                      variant={!showExpired ? "default" : "outline"}
+                      onClick={() => setShowExpired(false)}
+                      size="sm"
+                    >
+                      Active Only
+                    </Button>
+                  </div>
+
+                  {availableLanguages.length > 1 && (
+                    <div className="flex items-center gap-4 flex-wrap border-t border-primary/20 pt-4">
+                      <Languages className="w-6 h-6 text-secondary" />
+                      <span className="text-lg font-bold text-secondary">Language:</span>
                       <Button
-                        key={lang.name}
-                        variant={selectedLanguage === lang.name ? "default" : "outline"}
+                        variant={selectedLanguage === "" ? "default" : "outline"}
                         onClick={() => {
-                          setSelectedLanguage(lang.name);
+                          setSelectedLanguage("");
                           setSelectedDialect("");
                         }}
                         size="sm"
                       >
-                        {lang.name}
+                        All Languages
                       </Button>
-                    ))}
-                  </div>
-                )}
+                      {availableLanguages.map(lang => (
+                        <Button
+                          key={lang.name}
+                          variant={selectedLanguage === lang.name ? "default" : "outline"}
+                          onClick={() => {
+                            setSelectedLanguage(lang.name);
+                            setSelectedDialect("");
+                          }}
+                          size="sm"
+                        >
+                          {lang.name}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
 
-                {selectedLanguage && availableDialects.length > 1 && (
-                  <div className="flex items-center gap-4 flex-wrap border-t border-secondary/20 pt-4">
-                    <Clock className="w-6 h-6 text-accent" />
-                    <span className="text-lg font-bold text-accent">Dialect:</span>
-                    <Button
-                      variant={selectedDialect === "" ? "default" : "outline"}
-                      onClick={() => setSelectedDialect("")}
-                      size="sm"
-                    >
-                      All Dialects
-                    </Button>
-                    {availableDialects.map(dialect => (
+                  {selectedLanguage && availableDialects.length > 1 && (
+                    <div className="flex items-center gap-4 flex-wrap border-t border-secondary/20 pt-4">
+                      <Clock className="w-6 h-6 text-accent" />
+                      <span className="text-lg font-bold text-accent">Dialect:</span>
                       <Button
-                        key={dialect}
-                        variant={selectedDialect === dialect ? "default" : "outline"}
-                        onClick={() => setSelectedDialect(dialect)}
+                        variant={selectedDialect === "" ? "default" : "outline"}
+                        onClick={() => setSelectedDialect("")}
                         size="sm"
                       >
-                        {dialect}
+                        All Dialects
                       </Button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </Card>
-
-            {/* Bulk Subscriptions */}
-            {displayBulk.length > 0 && (
-              <div className="mb-8">
-                <h2 className="text-2xl font-bold text-primary mb-4 flex items-center gap-2">
-                  <Package className="w-6 h-6" />
-                  Bulk Subscriptions
-                </h2>
-                <div className="space-y-4">
-                  {displayBulk.map((bulk) => (
-                    <Card key={bulk.id} className={`p-6 ${bulk.isExpired ? 'opacity-60' : ''}`}>
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="text-xl font-bold text-primary">
-                              Bulk Purchase - {bulk.datasetCount} Datasets
-                            </h3>
-                            {bulk.isExpired && (
-                              <span className="px-2 py-1 bg-destructive/20 border border-destructive rounded text-xs text-destructive font-bold">
-                                EXPIRED
-                              </span>
-                            )}
-                          </div>
-                          <div className="space-y-1 text-sm text-muted-foreground">
-                            <p>Purchased: {new Date(bulk.createdAt).toLocaleDateString()}</p>
-                            <p>Duration: {bulk.daysPurchased} day{bulk.daysPurchased !== 1 ? 's' : ''}</p>
-                            <p>Total Paid: {formatPrice(bulk.totalPrice)} SUI</p>
-                            {bulk.totalDiscount > 0 && (
-                              <p className="text-accent font-bold">
-                                Discount Saved: {formatPrice(bulk.totalDiscount)} SUI
-                              </p>
-                            )}
-                            <div className="flex items-center gap-2 mt-2">
-                              <Clock className="w-4 h-4" />
-                              <span className={`font-bold ${bulk.isExpired ? 'text-destructive' : 'text-accent'}`}>
-                                {bulk.timeRemaining}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
+                      {availableDialects.map(dialect => (
                         <Button
-                          variant="outline"
+                          key={dialect}
+                          variant={selectedDialect === dialect ? "default" : "outline"}
+                          onClick={() => setSelectedDialect(dialect)}
                           size="sm"
-                          onClick={() => toggleBulkExpand(bulk.id)}
                         >
-                          {expandedBulk.has(bulk.id) ? 'Hide' : 'Show'} Datasets
+                          {dialect}
                         </Button>
-                      </div>
-
-                      {expandedBulk.has(bulk.id) && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-primary/20">
-                          {bulk.subscriptions.map(sub => (
-                            <div key={sub.id} className="p-4 bg-background/50 rounded border border-primary/20">
-                              <h4 className="font-bold text-primary mb-2">
-                                {sub.language} - {sub.dialect}
-                              </h4>
-                              <p className="text-sm text-muted-foreground mb-3">
-                                Duration: {sub.durationLabel}
-                              </p>
-                              <Button
-                                onClick={() => handleDownload(sub)}
-                                disabled={downloading === sub.id || sub.isExpired}
-                                className="w-full font-bold"
-                                size="sm"
-                              >
-                                {downloading === sub.id ? (
-                                  <>
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                    Downloading...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Download className="w-4 h-4 mr-2" />
-                                    Download
-                                  </>
-                                )}
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </Card>
-                  ))}
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              </Card>
 
-            {/* Single Subscriptions */}
-            {displaySubscriptions.length > 0 && (
+              {/* Individual Subscriptions Only - No Bulk Section */}
               <div>
                 <h2 className="text-2xl font-bold text-primary mb-4">
-                  Individual Subscriptions
+                  Your Subscriptions ({filteredSubscriptions.length})
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {displaySubscriptions.map((sub) => (
+                  {filteredSubscriptions.map((sub) => (
                     <Card
                       key={sub.id}
-                      className={`p-6 transition-all ${sub.isExpired ? 'opacity-60' : ''}`}
+                      className={`p-6 transition-all neon-border bg-card/80 backdrop-blur ${sub.isExpired ? 'opacity-60' : ''}`}
                     >
                       {sub.isExpired && (
                         <div className="mb-4 p-2 bg-destructive/20 border border-destructive rounded flex items-center gap-2">
@@ -703,9 +496,9 @@ const MySubscriptions = () => {
                   ))}
                 </div>
               </div>
-            )}
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
