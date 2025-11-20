@@ -7,6 +7,7 @@ import { Upload, Loader2 } from "lucide-react";
 import { SealClient } from '@mysten/seal';
 import { toHex } from '@mysten/sui/utils';
 import { toast } from "sonner";
+import { config } from '@/config/env';
 
 interface WalrusEncryptUploadProps {
   audioBlob: Blob;
@@ -24,13 +25,9 @@ type DatasetInfo = {
   txDigest: string;
 };
 
-const PACKAGE_ID = "0xaeb46ee2312a97f98095b3dca0993790337ec0ec9fd0692dd4979a004f3d187c";
-const SERVER_OBJECT_IDS = [
-  "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
-  "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
-];
-
-const WALRUS_PUBLISHER_URL = "https://publisher.walrus-testnet.walrus.space";
+const PACKAGE_ID = config.packageId;
+const SERVER_OBJECT_IDS = config.serverObjectIds;
+const WALRUS_PUBLISHER_URL = config.walrus.publisherUrl;
 
 // Helper function to parse duration string to seconds
 const parseDurationToSeconds = (duration: string): number => {
