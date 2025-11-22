@@ -482,7 +482,7 @@ const MySubscriptions = () => {
                             DOWNLOADING...
                           </>
                         ) : sub.isExpired ? (
-                          'EXPIRED - RENEW TO ACCESS'
+                          'EXPIRED'
                         ) : (
                           <>
                             <Download className="w-5 h-5 mr-2" />

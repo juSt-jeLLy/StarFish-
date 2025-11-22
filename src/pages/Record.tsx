@@ -150,74 +150,99 @@ const Record = () => {
     }
   };
 
-  const handleAddLanguage = async () => {
-    if (!currentAccount?.address || !languageName.trim() || !sampleTexts.trim()) {
-      toast.error("Please fill all fields");
+// Replace the handleAddLanguage function in src/pages/Record.tsx
+
+const handleAddLanguage = async () => {
+  if (!currentAccount?.address || !languageName.trim() || !sampleTexts.trim()) {
+    toast.error("Please fill all fields");
+    return;
+  }
+
+  setIsSubmitting(true);
+  try {
+    const tx = new Transaction();
+    
+    // Split by double newlines to treat paragraphs as separate texts
+    const textsArray = sampleTexts
+      .split(/\n\n+/)  // Split on 2 or more newlines (paragraph breaks)
+      .map(t => t.trim())
+      .filter(t => t.length > 0);
+    
+    if (textsArray.length === 0) {
+      toast.error("Please add at least one sample text paragraph");
+      setIsSubmitting(false);
       return;
     }
+    
+    // Dynamic gas calculation based on data size
+    // Base gas: 10M MIST
+    // Per paragraph: 5M MIST
+    // Per character: 10K MIST (for storage costs)
+    const totalTextLength = textsArray.reduce((sum, text) => sum + text.length, 0);
+    const paragraphCount = textsArray.length;
+    
+    const baseGas = 10_000_000; // 10M MIST base
+    const perParagraphGas = 5_000_000; // 5M per paragraph
+    const perCharGas = 10_000; // 10K per character
+    
+    const estimatedGas = baseGas + 
+                         (paragraphCount * perParagraphGas) + 
+                         (totalTextLength * perCharGas);
+    
+    // Add 50% buffer for safety, cap at 500M MIST (0.5 SUI)
+    const finalGas = Math.min(Math.ceil(estimatedGas * 1.5), 500_000_000);
+    
+    tx.setGasBudget(finalGas);
+    
+    console.log(`Gas calculation:
+      - Paragraphs: ${paragraphCount}
+      - Total characters: ${totalTextLength}
+      - Base gas: ${baseGas / 1_000_000}M MIST
+      - Paragraph gas: ${(paragraphCount * perParagraphGas) / 1_000_000}M MIST
+      - Character gas: ${(totalTextLength * perCharGas) / 1_000_000}M MIST
+      - Final budget (with 50% buffer): ${finalGas / 1_000_000}M MIST (${finalGas / 1_000_000_000} SUI)
+    `);
+    
+    tx.moveCall({
+      target: `${PACKAGE_ID}::voice_marketplace::add_language_entry`,
+      arguments: [
+        tx.object(REGISTRY_ID),
+        tx.pure.string(languageName.trim()),
+        tx.pure.vector('string', textsArray),
+        tx.object('0x6'),
+      ],
+    });
 
-    setIsSubmitting(true);
-    try {
-      const tx = new Transaction();
-      
-      // Split by double newlines to treat paragraphs as separate texts
-      const textsArray = sampleTexts
-        .split(/\n\n+/)  // Split on 2 or more newlines (paragraph breaks)
-        .map(t => t.trim())
-        .filter(t => t.length > 0);
-      
-      if (textsArray.length === 0) {
-        toast.error("Please add at least one sample text paragraph");
-        setIsSubmitting(false);
-        return;
+    signAndExecute(
+      { transaction: tx },
+      {
+        onSuccess: () => {
+          toast.success(`Language "${languageName}" added with ${textsArray.length} sample text(s)!`);
+          setLanguageName("");
+          setSampleTexts("");
+          setShowAddLanguageForm(false);
+          loadCategoriesAndDurations();
+        },
+        onError: (error: any) => {
+          const errorMsg = error?.message || 'Unknown error';
+          if (errorMsg.includes('ELanguageAlreadyExists') || errorMsg.includes('8')) {
+            toast.error(`Language "${languageName}" already exists!`);
+          } else if (errorMsg.includes('InsufficientGas')) {
+            toast.error("Insufficient gas. Try reducing the amount of sample text or breaking it into smaller pieces.");
+          } else if (errorMsg.includes('InsufficientCoinBalance')) {
+            toast.error(`Insufficient SUI balance. You need at least ${(finalGas / 1_000_000_000).toFixed(3)} SUI for this transaction.`);
+          } else {
+            toast.error("Failed to add language: " + errorMsg);
+          }
+        },
       }
-      
-      // Calculate estimated data size and set appropriate gas budget
-      const totalTextLength = textsArray.reduce((sum, text) => sum + text.length, 0);
-      // Base gas + additional gas based on text size (roughly 100k MIST per 1KB of text)
-      const estimatedGas = Math.max(20_000_000, 10_000_000 + Math.ceil(totalTextLength / 1000) * 100_000);
-      tx.setGasBudget(estimatedGas);
-      
-      console.log(`Setting gas budget to ${estimatedGas} MIST for ${textsArray.length} texts totaling ${totalTextLength} characters`);
-      
-      tx.moveCall({
-        target: `${PACKAGE_ID}::voice_marketplace::add_language_entry`,
-        arguments: [
-          tx.object(REGISTRY_ID),
-          tx.pure.string(languageName.trim()),
-          tx.pure.vector('string', textsArray),
-          tx.object('0x6'),
-        ],
-      });
-
-      signAndExecute(
-        { transaction: tx },
-        {
-          onSuccess: () => {
-            toast.success(`Language "${languageName}" added with ${textsArray.length} sample text(s)!`);
-            setLanguageName("");
-            setSampleTexts("");
-            setShowAddLanguageForm(false);
-            loadCategoriesAndDurations();
-          },
-          onError: (error: any) => {
-            const errorMsg = error?.message || 'Unknown error';
-            if (errorMsg.includes('ELanguageAlreadyExists') || errorMsg.includes('8')) {
-              toast.error(`Language "${languageName}" already exists!`);
-            } else if (errorMsg.includes('InsufficientGas')) {
-              toast.error("Insufficient gas. Try reducing the length of your sample texts or add more SUI to your wallet.");
-            } else {
-              toast.error("Failed to add language: " + errorMsg);
-            }
-          },
-        }
-      );
-    } catch (error: any) {
-      toast.error(`Failed: ${error?.message || 'Unknown error'}`);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    );
+  } catch (error: any) {
+    toast.error(`Failed: ${error?.message || 'Unknown error'}`);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   const handleAddDialect = async () => {
     if (!currentAccount?.address || !selectedLanguage || !dialectName.trim()) {
