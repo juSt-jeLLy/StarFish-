@@ -3,7 +3,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { useSignAndExecuteTransaction, useSuiClient, useCurrentAccount } from '@mysten/dapp-kit';
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Upload, Loader2 } from "lucide-react";
+import { Upload, Loader2, CheckCircle, Lock, Cloud, Blocks, Link2 } from "lucide-react";
 import { SealClient } from '@mysten/seal';
 import { toHex } from '@mysten/sui/utils';
 import { toast } from "sonner";
@@ -25,6 +25,14 @@ type DatasetInfo = {
   txDigest: string;
 };
 
+type UploadStep = {
+  id: string;
+  label: string;
+  status: 'pending' | 'loading' | 'success' | 'error';
+  icon: any;
+  details?: string;
+};
+
 const PACKAGE_ID = config.packageId;
 const SERVER_OBJECT_IDS = config.serverObjectIds;
 const WALRUS_PUBLISHER_URL = config.walrus.publisherUrl;
@@ -36,7 +44,6 @@ const parseDurationToSeconds = (duration: string): number => {
   if (duration === "2 minutes") return 120;
   if (duration === "5 minutes") return 300;
   
-  // Try to extract number from custom duration labels
   const match = duration.match(/(\d+)\s*(second|minute|min|sec)/i);
   if (match) {
     const value = parseInt(match[1]);
@@ -45,7 +52,7 @@ const parseDurationToSeconds = (duration: string): number => {
     return value;
   }
   
-  return 30; // Default
+  return 30;
 };
 
 export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
@@ -59,6 +66,14 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
 }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [datasetInfo, setDatasetInfo] = useState<DatasetInfo | null>(null);
+  const [uploadSteps, setUploadSteps] = useState<UploadStep[]>([
+    { id: 'read', label: 'Reading audio file', status: 'pending', icon: Upload },
+    { id: 'encrypt', label: 'Encrypting with SEAL', status: 'pending', icon: Lock },
+    { id: 'upload', label: 'Uploading to Walrus', status: 'pending', icon: Cloud },
+    { id: 'create', label: 'Creating dataset on Sui', status: 'pending', icon: Blocks },
+    { id: 'publish', label: 'Publishing to marketplace', status: 'pending', icon: Link2 },
+  ]);
+  
   const suiClient = useSuiClient();
   const currentAccount = useCurrentAccount();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
@@ -72,6 +87,12 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
     verifyKeyServers: false,
   });
 
+  const updateStep = (stepId: string, status: UploadStep['status'], details?: string) => {
+    setUploadSteps(prev => prev.map(step => 
+      step.id === stepId ? { ...step, status, details } : step
+    ));
+  };
+
   const handleUpload = async () => {
     if (!currentAccount?.address) {
       toast.error("Please connect your wallet");
@@ -82,13 +103,17 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
     console.log('=== Upload Started ===');
     
     try {
-      // 1. Read audio file as ArrayBuffer
+      // Step 1: Read audio file
+      updateStep('read', 'loading');
       console.log('Step 1: Reading audio file...');
       const arrayBuffer = await audioBlob.arrayBuffer();
       const audioData = new Uint8Array(arrayBuffer);
       console.log('✓ Audio file read:', audioData.length, 'bytes');
+      updateStep('read', 'success', `${(audioData.length / 1024).toFixed(1)} KB`);
+      await new Promise(r => setTimeout(r, 300));
 
-      // 2. Create encryption ID
+      // Step 2: Create encryption ID and encrypt
+      updateStep('encrypt', 'loading');
       console.log('Step 2: Creating encryption ID...');
       const tempDatasetId = crypto.getRandomValues(new Uint8Array(32));
       const nonce = crypto.getRandomValues(new Uint8Array(5));
@@ -96,9 +121,7 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       const id = toHex(encryptionIdBytes);
       console.log('✓ Encryption ID created:', id);
 
-      // 3. Encrypt the audio data
       console.log('Step 3: Encrypting audio data...');
-      toast.info("Encrypting audio data...");
       const { encryptedObject: encryptedBytes } = await client.encrypt({
         threshold: 2,
         packageId: PACKAGE_ID,
@@ -106,10 +129,12 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
         data: audioData,
       });
       console.log('✓ Audio encrypted:', encryptedBytes.length, 'bytes');
+      updateStep('encrypt', 'success', `${(encryptedBytes.length / 1024).toFixed(1)} KB encrypted`);
+      await new Promise(r => setTimeout(r, 300));
 
-      // 4. Upload encrypted data to Walrus
+      // Step 3: Upload to Walrus
+      updateStep('upload', 'loading');
       console.log('Step 4: Uploading to Walrus...');
-      toast.info("Uploading to Walrus...");
       const walrusUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=30`;
       
       const encryptedBlob = new Blob([encryptedBytes], { type: 'application/octet-stream' });
@@ -125,6 +150,7 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Walrus error response:', errorText);
+        updateStep('upload', 'error', 'Upload failed');
         throw new Error(`Walrus upload failed: ${errorText}`);
       }
 
@@ -137,30 +163,33 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       } else if ('newlyCreated' in storageInfo) {
         blobId = storageInfo.newlyCreated.blobObject.blobId;
       } else {
+        updateStep('upload', 'error', 'Unexpected response');
         throw new Error('Unexpected storage response format');
       }
+      
+      updateStep('upload', 'success', blobId.substring(0, 12) + '...');
+      await new Promise(r => setTimeout(r, 500));
 
-      // 5. Create dataset on Sui blockchain with on-chain category validation
+      // Step 4: Create dataset on blockchain
+      updateStep('create', 'loading');
       console.log('Step 5: Creating dataset on blockchain...');
-      toast.info("Creating dataset on blockchain...");
       const createTx = new Transaction();
       
       createTx.moveCall({
         target: `${PACKAGE_ID}::voice_marketplace::create_dataset_entry`,
         arguments: [
-          createTx.object(registryId),        // CategoryRegistry
-          createTx.pure.string(language),     // Language name
-          createTx.pure.string(dialect),      // Dialect name
-          createTx.object(durationId),        // DurationOption object
-          createTx.pure.string(blobId),       // Blob ID
-          createTx.pure.vector('u8', encryptionIdBytes), // Encryption ID
-          createTx.object('0x6'),             // Clock object
+          createTx.object(registryId),
+          createTx.pure.string(language),
+          createTx.pure.string(dialect),
+          createTx.object(durationId),
+          createTx.pure.string(blobId),
+          createTx.pure.vector('u8', encryptionIdBytes),
+          createTx.object('0x6'),
         ],
       });
 
       createTx.setGasBudget(10000000);
       
-      // Execute and get BOTH datasetId and capId
       const { datasetId, capId } = await new Promise<{ datasetId: string; capId: string }>((resolve, reject) => {
         signAndExecute(
           { transaction: createTx },
@@ -168,11 +197,9 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
             onSuccess: async (result: any) => {
               console.log('Step 6: Dataset created, transaction:', result.digest);
               
-              // Wait for indexing
               await new Promise(r => setTimeout(r, 3000));
               
               try {
-                // Get transaction details to find created objects
                 const txDetails = await suiClient.getTransactionBlock({
                   digest: result.digest,
                   options: {
@@ -183,7 +210,6 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
                 
                 console.log('Transaction details:', JSON.stringify(txDetails, null, 2));
                 
-                // Find VoiceDataset and DatasetCap from objectChanges
                 let foundDatasetId = '';
                 let foundCapId = '';
                 
@@ -192,13 +218,11 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
                     if (change.type === 'created') {
                       const objectType = change.objectType || '';
                       
-                      // Check if it's VoiceDataset
                       if (objectType.includes('voice_marketplace::VoiceDataset')) {
                         foundDatasetId = change.objectId;
                         console.log('✓ Found VoiceDataset:', foundDatasetId);
                       }
                       
-                      // Check if it's DatasetCap
                       if (objectType.includes('voice_marketplace::DatasetCap')) {
                         foundCapId = change.objectId;
                         console.log('✓ Found DatasetCap:', foundCapId);
@@ -225,7 +249,6 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
               console.error('✗ Create dataset error:', error);
               const errorMsg = error?.message || 'Unknown error';
               
-              // Handle specific contract errors with user-friendly messages
               if (errorMsg.includes('ELanguageNotFound') || errorMsg.includes('4')) {
                 reject(new Error(`Language "${language}" not found. Please add it first.`));
               } else if (errorMsg.includes('EDialectNotFound') || errorMsg.includes('5')) {
@@ -238,11 +261,14 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
         );
       });
 
-      // 6. Publish blob to dataset using the Cap
+      updateStep('create', 'success', datasetId.substring(0, 12) + '...');
+      await new Promise(r => setTimeout(r, 500));
+
+      // Step 5: Publish to marketplace
+      updateStep('publish', 'loading');
       console.log('Step 7: Publishing blob to dataset...');
       console.log('Using datasetId:', datasetId);
       console.log('Using capId:', capId);
-      toast.info("Attaching blob to dataset...");
       
       await new Promise<void>((resolve, reject) => {
         const publishTx = new Transaction();
@@ -251,10 +277,10 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
         publishTx.moveCall({
           target: `${PACKAGE_ID}::voice_marketplace::publish_entry`,
           arguments: [
-            publishTx.object(datasetId),     // VoiceDataset object
-            publishTx.object(capId),         // DatasetCap object (separate!)
-            publishTx.pure.string(blobId),   // blob_id
-            publishTx.object('0x6'),         // Clock object
+            publishTx.object(datasetId),
+            publishTx.object(capId),
+            publishTx.pure.string(blobId),
+            publishTx.object('0x6'),
           ],
         });
 
@@ -263,20 +289,27 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
           {
             onSuccess: (result: any) => {
               console.log('✓ Blob attached successfully!');
-              toast.success("Dataset published to marketplace!");
+              
+              updateStep('publish', 'success', 'Live on marketplace');
               
               const info: DatasetInfo = {
                 blobId: blobId,
                 datasetId: datasetId,
                 txDigest: result.digest,
               };
-              setDatasetInfo(info);
-              onSuccess(info);
-              setIsUploading(false);
+              
+              setTimeout(() => {
+                setDatasetInfo(info);
+                onSuccess(info);
+                setIsUploading(false);
+                toast.success("Dataset published to marketplace!");
+              }, 500);
+              
               resolve();
             },
             onError: (error: any) => {
               console.error('✗ Publish error:', error);
+              updateStep('publish', 'error', error?.message || 'Unknown error');
               toast.error("Failed to attach blob: " + (error?.message || 'Unknown error'));
               setIsUploading(false);
               reject(error);
@@ -294,7 +327,6 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
     }
   };
 
-  // Calculate price preview based on duration
   const durationSeconds = parseDurationToSeconds(duration);
   const pricePerDay = (durationSeconds / 30) * 0.001;
 
@@ -317,24 +349,96 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
         </div>
         
         {!datasetInfo ? (
-          <Button
-            size="lg"
-            onClick={handleUpload}
-            disabled={isUploading || !currentAccount}
-            className="bg-gradient-to-r from-primary to-secondary text-background font-bold px-8 py-4 pixel-border"
-          >
-            {isUploading ? (
-              <>
-                <Loader2 className="w-6 h-6 mr-2 animate-spin" />
-                UPLOADING...
-              </>
-            ) : (
-              <>
-                <Upload className="w-6 h-6 mr-2" />
-                PUBLISH TO MARKETPLACE
-              </>
+          <>
+            <Button
+              size="lg"
+              onClick={handleUpload}
+              disabled={isUploading || !currentAccount}
+              className="bg-gradient-to-r from-primary to-secondary text-background font-bold px-8 py-4 pixel-border mb-6"
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-6 h-6 mr-2 animate-spin" />
+                  UPLOADING...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-6 h-6 mr-2" />
+                  PUBLISH TO MARKETPLACE
+                </>
+              )}
+            </Button>
+
+            {/* Progress Modal Overlay - Like Recording Timer */}
+            {isUploading && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none bg-black/50">
+                <div className="bg-background/95 border-4 border-primary rounded-lg px-8 py-6 max-w-md w-full mx-4 pointer-events-auto shadow-2xl" style={{ marginTop: '-45vh' }}>
+                  <h4 className="text-2xl font-bold text-primary mb-6 text-center">Publishing Dataset</h4>
+                  
+                  <div className="space-y-3">
+                    {uploadSteps.map((step, index) => {
+                      const Icon = step.icon;
+                      return (
+                        <div 
+                          key={step.id}
+                          className={`flex items-start gap-3 p-3 rounded-lg border transition-all ${
+                            step.status === 'loading' 
+                              ? 'bg-primary/20 border-primary' 
+                              : step.status === 'success'
+                              ? 'bg-accent/20 border-accent'
+                              : step.status === 'error'
+                              ? 'bg-destructive/20 border-destructive'
+                              : 'bg-background/50 border-muted/30'
+                          }`}
+                        >
+                          <div className="flex-shrink-0 mt-0.5">
+                            {step.status === 'loading' && (
+                              <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                            )}
+                            {step.status === 'success' && (
+                              <CheckCircle className="w-5 h-5 text-accent" />
+                            )}
+                            {step.status === 'pending' && (
+                              <div className="w-5 h-5 rounded-full border-2 border-muted/50" />
+                            )}
+                            {step.status === 'error' && (
+                              <div className="w-5 h-5 text-destructive">✗</div>
+                            )}
+                          </div>
+                          
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <Icon className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <p className={`font-semibold text-sm ${
+                                step.status === 'loading' 
+                                  ? 'text-primary' 
+                                  : step.status === 'success'
+                                  ? 'text-accent'
+                                  : step.status === 'error'
+                                  ? 'text-destructive'
+                                  : 'text-muted-foreground'
+                              }`}>
+                                {step.label}
+                              </p>
+                            </div>
+                            {step.details && (
+                              <p className="text-xs text-muted-foreground mt-1 font-mono">
+                                {step.details}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  <p className="text-center text-sm text-muted-foreground mt-6">
+                    Please don't close this window...
+                  </p>
+                </div>
+              </div>
             )}
-          </Button>
+          </>
         ) : (
           <div className="space-y-4 text-left">
             <div className="bg-background/50 border border-primary/30 rounded-lg p-4">
@@ -386,4 +490,4 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
   );
 };
 
-export default WalrusEncryptUpload
+export default WalrusEncryptUpload;
