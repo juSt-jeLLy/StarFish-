@@ -76,6 +76,8 @@ const Record = () => {
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [visualizerData, setVisualizerData] = useState<Uint8Array | null>(null);
   const [publishedDataset, setPublishedDataset] = useState<DatasetInfo | null>(null);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [recordingInterval, setRecordingInterval] = useState<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadCategoriesAndDurations();
@@ -150,99 +152,97 @@ const Record = () => {
     }
   };
 
-// Replace the handleAddLanguage function in src/pages/Record.tsx
-
-const handleAddLanguage = async () => {
-  if (!currentAccount?.address || !languageName.trim() || !sampleTexts.trim()) {
-    toast.error("Please fill all fields");
-    return;
-  }
-
-  setIsSubmitting(true);
-  try {
-    const tx = new Transaction();
-    
-    // Split by double newlines to treat paragraphs as separate texts
-    const textsArray = sampleTexts
-      .split(/\n\n+/)  // Split on 2 or more newlines (paragraph breaks)
-      .map(t => t.trim())
-      .filter(t => t.length > 0);
-    
-    if (textsArray.length === 0) {
-      toast.error("Please add at least one sample text paragraph");
-      setIsSubmitting(false);
+  const handleAddLanguage = async () => {
+    if (!currentAccount?.address || !languageName.trim() || !sampleTexts.trim()) {
+      toast.error("Please fill all fields");
       return;
     }
-    
-    // Dynamic gas calculation based on data size
-    // Base gas: 10M MIST
-    // Per paragraph: 5M MIST
-    // Per character: 10K MIST (for storage costs)
-    const totalTextLength = textsArray.reduce((sum, text) => sum + text.length, 0);
-    const paragraphCount = textsArray.length;
-    
-    const baseGas = 10_000_000; // 10M MIST base
-    const perParagraphGas = 5_000_000; // 5M per paragraph
-    const perCharGas = 10_000; // 10K per character
-    
-    const estimatedGas = baseGas + 
-                         (paragraphCount * perParagraphGas) + 
-                         (totalTextLength * perCharGas);
-    
-    // Add 50% buffer for safety, cap at 500M MIST (0.5 SUI)
-    const finalGas = Math.min(Math.ceil(estimatedGas * 1.5), 500_000_000);
-    
-    tx.setGasBudget(finalGas);
-    
-    console.log(`Gas calculation:
-      - Paragraphs: ${paragraphCount}
-      - Total characters: ${totalTextLength}
-      - Base gas: ${baseGas / 1_000_000}M MIST
-      - Paragraph gas: ${(paragraphCount * perParagraphGas) / 1_000_000}M MIST
-      - Character gas: ${(totalTextLength * perCharGas) / 1_000_000}M MIST
-      - Final budget (with 50% buffer): ${finalGas / 1_000_000}M MIST (${finalGas / 1_000_000_000} SUI)
-    `);
-    
-    tx.moveCall({
-      target: `${PACKAGE_ID}::voice_marketplace::add_language_entry`,
-      arguments: [
-        tx.object(REGISTRY_ID),
-        tx.pure.string(languageName.trim()),
-        tx.pure.vector('string', textsArray),
-        tx.object('0x6'),
-      ],
-    });
 
-    signAndExecute(
-      { transaction: tx },
-      {
-        onSuccess: () => {
-          toast.success(`Language "${languageName}" added with ${textsArray.length} sample text(s)!`);
-          setLanguageName("");
-          setSampleTexts("");
-          setShowAddLanguageForm(false);
-          loadCategoriesAndDurations();
-        },
-        onError: (error: any) => {
-          const errorMsg = error?.message || 'Unknown error';
-          if (errorMsg.includes('ELanguageAlreadyExists') || errorMsg.includes('8')) {
-            toast.error(`Language "${languageName}" already exists!`);
-          } else if (errorMsg.includes('InsufficientGas')) {
-            toast.error("Insufficient gas. Try reducing the amount of sample text or breaking it into smaller pieces.");
-          } else if (errorMsg.includes('InsufficientCoinBalance')) {
-            toast.error(`Insufficient SUI balance. You need at least ${(finalGas / 1_000_000_000).toFixed(3)} SUI for this transaction.`);
-          } else {
-            toast.error("Failed to add language: " + errorMsg);
-          }
-        },
+    setIsSubmitting(true);
+    try {
+      const tx = new Transaction();
+      
+      // Split by double newlines to treat paragraphs as separate texts
+      const textsArray = sampleTexts
+        .split(/\n\n+/)  // Split on 2 or more newlines (paragraph breaks)
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
+      
+      if (textsArray.length === 0) {
+        toast.error("Please add at least one sample text paragraph");
+        setIsSubmitting(false);
+        return;
       }
-    );
-  } catch (error: any) {
-    toast.error(`Failed: ${error?.message || 'Unknown error'}`);
-  } finally {
-    setIsSubmitting(false);
-  }
-};
+      
+      // Dynamic gas calculation based on data size
+      // Base gas: 10M MIST
+      // Per paragraph: 5M MIST
+      // Per character: 10K MIST (for storage costs)
+      const totalTextLength = textsArray.reduce((sum, text) => sum + text.length, 0);
+      const paragraphCount = textsArray.length;
+      
+      const baseGas = 10_000_000; // 10M MIST base
+      const perParagraphGas = 5_000_000; // 5M per paragraph
+      const perCharGas = 10_000; // 10K per character
+      
+      const estimatedGas = baseGas + 
+                           (paragraphCount * perParagraphGas) + 
+                           (totalTextLength * perCharGas);
+      
+      // Add 50% buffer for safety, cap at 500M MIST (0.5 SUI)
+      const finalGas = Math.min(Math.ceil(estimatedGas * 1.5), 500_000_000);
+      
+      tx.setGasBudget(finalGas);
+      
+      console.log(`Gas calculation:
+        - Paragraphs: ${paragraphCount}
+        - Total characters: ${totalTextLength}
+        - Base gas: ${baseGas / 1_000_000}M MIST
+        - Paragraph gas: ${(paragraphCount * perParagraphGas) / 1_000_000}M MIST
+        - Character gas: ${(totalTextLength * perCharGas) / 1_000_000}M MIST
+        - Final budget (with 50% buffer): ${finalGas / 1_000_000}M MIST (${finalGas / 1_000_000_000} SUI)
+      `);
+      
+      tx.moveCall({
+        target: `${PACKAGE_ID}::voice_marketplace::add_language_entry`,
+        arguments: [
+          tx.object(REGISTRY_ID),
+          tx.pure.string(languageName.trim()),
+          tx.pure.vector('string', textsArray),
+          tx.object('0x6'),
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: () => {
+            toast.success(`Language "${languageName}" added with ${textsArray.length} sample text(s)!`);
+            setLanguageName("");
+            setSampleTexts("");
+            setShowAddLanguageForm(false);
+            loadCategoriesAndDurations();
+          },
+          onError: (error: any) => {
+            const errorMsg = error?.message || 'Unknown error';
+            if (errorMsg.includes('ELanguageAlreadyExists') || errorMsg.includes('8')) {
+              toast.error(`Language "${languageName}" already exists!`);
+            } else if (errorMsg.includes('InsufficientGas')) {
+              toast.error("Insufficient gas. Try reducing the amount of sample text or breaking it into smaller pieces.");
+            } else if (errorMsg.includes('InsufficientCoinBalance')) {
+              toast.error(`Insufficient SUI balance. You need at least ${(finalGas / 1_000_000_000).toFixed(3)} SUI for this transaction.`);
+            } else {
+              toast.error("Failed to add language: " + errorMsg);
+            }
+          },
+        }
+      );
+    } catch (error: any) {
+      toast.error(`Failed: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleAddDialect = async () => {
     if (!currentAccount?.address || !selectedLanguage || !dialectName.trim()) {
@@ -383,13 +383,40 @@ const handleAddLanguage = async () => {
     if (isRecording && audioRecorder) {
       try {
         setIsRecording(false);
+        if (recordingInterval) {
+          clearInterval(recordingInterval);
+          setRecordingInterval(null);
+        }
+        
         const blob = await audioRecorder.stop();
+        
+        // Validate recording duration
+        if (selectedDuration) {
+          const targetSeconds = selectedDuration.seconds;
+          const minSeconds = targetSeconds - 5; // 5 seconds tolerance below
+          const maxSeconds = targetSeconds + 5; // 5 seconds tolerance above
+          
+          if (recordingTime < minSeconds) {
+            toast.error(`Recording too short! Please record for at least ${minSeconds} seconds (target: ${targetSeconds}s)`);
+            setRecordingTime(0);
+            return;
+          }
+          
+          if (recordingTime > maxSeconds) {
+            toast.error(`Recording too long! Please keep it under ${maxSeconds} seconds (target: ${targetSeconds}s)`);
+            setRecordingTime(0);
+            return;
+          }
+        }
+        
         setRecordedBlob(blob);
         setVisualizerData(null);
-        toast.success("Recording saved successfully!");
+        toast.success(`Recording saved successfully! Duration: ${recordingTime}s`);
+        setRecordingTime(0);
       } catch (error) {
         console.error("Error stopping recording:", error);
         toast.error("Failed to save recording");
+        setRecordingTime(0);
       }
     } else {
       try {
@@ -401,6 +428,14 @@ const handleAddLanguage = async () => {
         setIsRecording(true);
         setRecordedBlob(null);
         setPublishedDataset(null);
+        setRecordingTime(0);
+        
+        // Start timer
+        const interval = setInterval(() => {
+          setRecordingTime(prev => prev + 1);
+        }, 1000);
+        setRecordingInterval(interval);
+        
         toast.success("Recording started!");
       } catch (error) {
         console.error("Error starting recording:", error);
@@ -431,7 +466,6 @@ const handleAddLanguage = async () => {
     setRecordedBlob(null);
     setPublishedDataset(null);
   };
-
 
   if (loading) {
     return (
@@ -889,6 +923,37 @@ Each paragraph will be a separate sample text for recording."
                     dataArray={visualizerData} 
                     isRecording={isRecording} 
                   />
+                  
+                  {/* Recording Timer Overlay */}
+                  {isRecording && selectedDuration && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="bg-background/90 border-2 border-primary rounded-lg px-8 py-4">
+                        <div className="text-center">
+                          <p className="text-5xl font-bold text-primary font-mono">
+                            {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
+                          </p>
+                          <p className="text-sm text-muted-foreground mt-2">
+                            Target: {selectedDuration.seconds}s ({selectedDuration.seconds - 5}s - {selectedDuration.seconds + 5}s)
+                          </p>
+                          {recordingTime > selectedDuration.seconds + 5 && (
+                            <p className="text-destructive font-bold text-sm mt-1 animate-pulse">
+                              ⚠️ Too long! Stop recording
+                            </p>
+                          )}
+                          {recordingTime < selectedDuration.seconds - 5 && (
+                            <p className="text-accent font-bold text-sm mt-1">
+                              Keep recording...
+                            </p>
+                          )}
+                          {recordingTime >= selectedDuration.seconds - 5 && recordingTime <= selectedDuration.seconds + 5 && (
+                            <p className="text-primary font-bold text-sm mt-1 animate-pulse">
+                              ✓ Perfect duration!
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-col items-center gap-4">
@@ -928,9 +993,14 @@ Each paragraph will be a separate sample text for recording."
                 </div>
 
                 {isRecording && (
-                  <p className="text-center text-destructive font-bold mt-4 animate-pulse">
-                    RECORDING IN PROGRESS...
-                  </p>
+                  <div className="text-center mt-4 space-y-2">
+                    <p className="text-destructive font-bold animate-pulse">
+                      RECORDING IN PROGRESS...
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Recording time: {recordingTime}s / Target: {selectedDuration?.seconds}s (±5s tolerance)
+                    </p>
+                  </div>
                 )}
 
                 {recordedBlob && !isRecording && !publishedDataset && (
