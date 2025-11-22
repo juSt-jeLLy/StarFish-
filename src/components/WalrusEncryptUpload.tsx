@@ -110,7 +110,7 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       // 4. Upload encrypted data to Walrus
       console.log('Step 4: Uploading to Walrus...');
       toast.info("Uploading to Walrus...");
-      const walrusUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=20`;
+      const walrusUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=30`;
       
       const encryptedBlob = new Blob([encryptedBytes], { type: 'application/octet-stream' });
       

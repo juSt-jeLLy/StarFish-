@@ -414,11 +414,13 @@ const Marketplace = () => {
     }
   };
 
-  const filteredDatasets = datasets.filter(d => {
-    if (selectedLanguage && d.language !== selectedLanguage) return false;
-    if (selectedDialect && d.dialect !== selectedDialect) return false;
-    return true;
-  });
+const filteredDatasets = datasets
+    .slice(14) // Skip the first 14 datasets (EPOCH expired)
+    .filter(d => {
+      if (selectedLanguage && d.language !== selectedLanguage) return false;
+      if (selectedDialect && d.dialect !== selectedDialect) return false;
+      return true;
+    });
 
   const getButtonState = (dataset: DatasetData) => {
     if (myDatasets.has(dataset.id)) {
@@ -554,8 +556,9 @@ const Marketplace = () => {
                   <Filter className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-primary">Filters & Selection</h2>
+                  <h2 className="text-xl font-bold text-primary">Filters & Selection </h2>
                   <p className="text-sm text-muted-foreground">Filter datasets and manage bulk purchases</p>
+                
                 </div>
               </div>
               
