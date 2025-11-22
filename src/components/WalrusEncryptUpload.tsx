@@ -110,7 +110,7 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
       // 4. Upload encrypted data to Walrus
       console.log('Step 4: Uploading to Walrus...');
       toast.info("Uploading to Walrus...");
-      const walrusUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=1`;
+      const walrusUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=20`;
       
       const encryptedBlob = new Blob([encryptedBytes], { type: 'application/octet-stream' });
       
@@ -345,7 +345,7 @@ export const WalrusEncryptUpload: React.FC<WalrusEncryptUploadProps> = ({
                   <dt className="text-muted-foreground font-semibold mb-2">Walrus Encrypted Blob</dt>
                   <dd className="text-foreground break-all font-mono text-xs mb-3 p-2 bg-background rounded">{datasetInfo.blobId}</dd>
                   <a
-                    href={`https://aggregator.walrus-testnet.walrus.space/v1/blobs/${datasetInfo.blobId}`}
+                    href={`https://walruscan.com/testnet/blob/${datasetInfo.blobId}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-secondary hover:text-secondary/80 underline font-semibold"

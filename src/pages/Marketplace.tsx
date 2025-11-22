@@ -168,29 +168,41 @@ const Marketplace = () => {
       }));
       setAvailableLanguages(languages.sort((a, b) => a.name.localeCompare(b.name)));
 
-      if (currentAccount?.address) {
-        const myDatasetIds = new Set(
-          validDatasets
-            .filter(d => d.creator === currentAccount.address)
-            .map(d => d.id)
-        );
-        setMyDatasets(myDatasetIds);
+     if (currentAccount?.address) {
+  const myDatasetIds = new Set(
+    validDatasets
+      .filter(d => d.creator === currentAccount.address)
+      .map(d => d.id)
+  );
+  setMyDatasets(myDatasetIds);
 
-        const subs = await suiClient.getOwnedObjects({
-          owner: currentAccount.address,
-          options: { showContent: true },
-          filter: {
-            StructType: `${PACKAGE_ID}::voice_marketplace::Subscription`,
-          },
-        });
+  // Load subscriptions and filter out expired ones
+  const subs = await suiClient.getOwnedObjects({
+    owner: currentAccount.address,
+    options: { showContent: true },
+    filter: {
+      StructType: `${PACKAGE_ID}::voice_marketplace::Subscription`,
+    },
+  });
 
-        const subDatasetIds = new Set(
-          subs.data
-            .map(obj => (obj.data?.content as any)?.fields?.dataset_id)
-            .filter(Boolean)
-        );
-        setMySubscriptions(subDatasetIds);
-      }
+  const currentTime = Date.now();
+  
+  // Only include subscriptions that are still active (not expired)
+  const activeSubDatasetIds = new Set(
+    subs.data
+      .filter(obj => {
+        const fields = (obj.data?.content as any)?.fields;
+        if (!fields) return false;
+        const expiresAt = parseInt(fields.expires_at);
+        // Return true only if subscription hasn't expired yet
+        return currentTime <= expiresAt;
+      })
+      .map(obj => (obj.data?.content as any)?.fields?.dataset_id)
+      .filter(Boolean)
+  );
+  
+  setMySubscriptions(activeSubDatasetIds);
+}
     } catch (error) {
       console.error("Error loading marketplace:", error);
       toast.error("Failed to load marketplace");
