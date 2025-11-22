@@ -162,22 +162,10 @@ const Marketplace = () => {
         languageMap.get(dataset.language)?.add(dataset.dialect);
       });
 
-// Load all languages and dialects from registry (not just from datasets)
-      const languages: LanguageData[] = [];
-      if (registryFields?.languages?.fields?.contents) {
-        const languagesMap = registryFields.languages.fields.contents;
-        for (const entry of languagesMap) {
-          const langName = entry.fields.key;
-          const langData = entry.fields.value.fields;
-          
-          const dialects = langData.dialects.map((d: any) => d.fields.name);
-          
-          languages.push({
-            name: langName,
-            dialects: dialects.sort(),
-          });
-        }
-      }
+      const languages: LanguageData[] = Array.from(languageMap.entries()).map(([name, dialectSet]) => ({
+        name,
+        dialects: Array.from(dialectSet).sort(),
+      }));
       setAvailableLanguages(languages.sort((a, b) => a.name.localeCompare(b.name)));
 
      if (currentAccount?.address) {
@@ -427,8 +415,11 @@ const Marketplace = () => {
   };
 
 const filteredDatasets = datasets
-    .slice(14) // Skip the first 14 datasets (EPOCH expired)
     .filter(d => {
+      // Filter out datasets created before or on November 21, 2025(EPOCH expired)
+      const cutoffDate = new Date('2025-11-21T23:59:59.999Z').getTime();
+      if (d.createdAt <= cutoffDate) return false;
+      
       if (selectedLanguage && d.language !== selectedLanguage) return false;
       if (selectedDialect && d.dialect !== selectedDialect) return false;
       return true;
@@ -568,9 +559,8 @@ const filteredDatasets = datasets
                   <Filter className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-primary">Filters & Selection </h2>
+                  <h2 className="text-xl font-bold text-primary">Filters & Selection</h2>
                   <p className="text-sm text-muted-foreground">Filter datasets and manage bulk purchases</p>
-                
                 </div>
               </div>
               
