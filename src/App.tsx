@@ -7,6 +7,7 @@ import Record from "./pages/Record";
 import Marketplace from "./pages/Marketplace";
 import NotFound from "./pages/NotFound";
 import MySubscriptions from "@/pages/MySubscriptions";
+import MyDatasets from '@/pages/MyDatasets';
 
 const App = () => (
   <TooltipProvider>
@@ -18,6 +19,8 @@ const App = () => (
         <Route path="/record" element={<Record />} />
         <Route path="/marketplace" element={<Marketplace />} />
         <Route path="/subscriptions" element={<MySubscriptions />} />
+<Route path="/my-datasets" element={<MyDatasets />} />
+
 
 
         <Route path="*" element={<NotFound />} />
