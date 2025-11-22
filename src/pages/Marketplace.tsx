@@ -162,10 +162,22 @@ const Marketplace = () => {
         languageMap.get(dataset.language)?.add(dataset.dialect);
       });
 
-      const languages: LanguageData[] = Array.from(languageMap.entries()).map(([name, dialectSet]) => ({
-        name,
-        dialects: Array.from(dialectSet).sort(),
-      }));
+// Load all languages and dialects from registry (not just from datasets)
+      const languages: LanguageData[] = [];
+      if (registryFields?.languages?.fields?.contents) {
+        const languagesMap = registryFields.languages.fields.contents;
+        for (const entry of languagesMap) {
+          const langName = entry.fields.key;
+          const langData = entry.fields.value.fields;
+          
+          const dialects = langData.dialects.map((d: any) => d.fields.name);
+          
+          languages.push({
+            name: langName,
+            dialects: dialects.sort(),
+          });
+        }
+      }
       setAvailableLanguages(languages.sort((a, b) => a.name.localeCompare(b.name)));
 
      if (currentAccount?.address) {
